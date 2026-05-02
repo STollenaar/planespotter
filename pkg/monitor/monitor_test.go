@@ -8,8 +8,11 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
+
+	adsbdb "github.com/nint8835/go-adsbdb"
 
 	"github.com/nint8835/planespotter/pkg/config"
 	"github.com/nint8835/planespotter/pkg/monitor"
@@ -79,6 +82,46 @@ func TestFetchAndCheckPersistsMultipleNewAircraft(t *testing.T) {
 	}
 
 	assertSeenFile(t, path, map[string]bool{"abc123": true, "def456": true})
+}
+
+func TestFetchAndCheckEnhancesNewAircraftWithHex(t *testing.T) {
+	server := aircraftServer(
+		t,
+		http.StatusOK,
+		`{"now":1,"messages":0,"aircraft":[{"hex":"abc123"},{"hex":"def456"}]}`,
+	)
+	defer server.Close()
+
+	path := filepath.Join(t.TempDir(), "seen.json")
+	adsbdbClient := &recordingADSBDBClient{}
+	mon := newTestMonitorWithADSBDB(t, server.URL, path, adsbdbClient)
+	if err := mon.FetchAndCheck(context.Background()); err != nil {
+		t.Fatalf("FetchAndCheck() error = %v", err)
+	}
+
+	want := []string{"abc123", "def456"}
+	if !reflect.DeepEqual(adsbdbClient.identifiers, want) {
+		t.Fatalf("adsbdb Aircraft() identifiers = %#v, want %#v", adsbdbClient.identifiers, want)
+	}
+}
+
+func TestFetchAndCheckPersistsAircraftWhenEnhancementFails(t *testing.T) {
+	server := aircraftServer(
+		t,
+		http.StatusOK,
+		`{"now":1,"messages":0,"aircraft":[{"hex":"abc123"}]}`,
+	)
+	defer server.Close()
+
+	path := filepath.Join(t.TempDir(), "seen.json")
+	mon := newTestMonitorWithADSBDB(t, server.URL, path, &recordingADSBDBClient{
+		err: errors.New("lookup failed"),
+	})
+	if err := mon.FetchAndCheck(context.Background()); err != nil {
+		t.Fatalf("FetchAndCheck() error = %v", err)
+	}
+
+	assertSeenFile(t, path, map[string]bool{"abc123": true})
 }
 
 func TestFetchAndCheckIgnoresEmptyHex(t *testing.T) {
@@ -172,16 +215,37 @@ func TestRunFetchesImmediately(t *testing.T) {
 func newTestMonitor(t *testing.T, tar1090URL string, path string) *monitor.Monitor {
 	t.Helper()
 
+	return newTestMonitorWithADSBDB(t, tar1090URL, path, &recordingADSBDBClient{})
+}
+
+func newTestMonitorWithADSBDB(
+	t *testing.T,
+	tar1090URL string,
+	path string,
+	adsbdbClient *recordingADSBDBClient,
+) *monitor.Monitor {
+	t.Helper()
+
 	monitor, err := monitor.New(config.Config{
 		Tar1090URL:       tar1090URL,
 		MonitorInterval:  time.Minute,
 		SeenAircraftPath: path,
-	})
+	}, monitor.WithADSBDBClient(adsbdbClient))
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
 
 	return monitor
+}
+
+type recordingADSBDBClient struct {
+	identifiers []string
+	err         error
+}
+
+func (c *recordingADSBDBClient) Aircraft(_ context.Context, identifier string) (adsbdb.Aircraft, error) {
+	c.identifiers = append(c.identifiers, identifier)
+	return adsbdb.Aircraft{}, c.err
 }
 
 func aircraftServer(t *testing.T, statusCode int, body string) *httptest.Server {

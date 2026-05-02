@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"time"
+
+	adsbdb "github.com/nint8835/go-adsbdb"
 
 	"github.com/nint8835/planespotter/pkg/config"
 	"github.com/nint8835/planespotter/pkg/tar1090"
@@ -16,21 +19,57 @@ import (
 // Monitor periodically fetches tar1090 aircraft data and posts newly-seen aircraft.
 type Monitor struct {
 	cfg          config.Config
+	adsbdb       aircraftLookupClient
 	client       *tar1090.Client
 	seenAircraft map[string]bool
 }
 
+type aircraftLookupClient interface {
+	Aircraft(ctx context.Context, identifier string) (adsbdb.Aircraft, error)
+}
+
+// Option configures a Monitor.
+type Option func(*Monitor) error
+
+// WithADSBDBClient configures the ADS-B DB client used to enrich aircraft data.
+func WithADSBDBClient(client interface {
+	Aircraft(ctx context.Context, identifier string) (adsbdb.Aircraft, error)
+}) Option {
+	return func(m *Monitor) error {
+		if client == nil {
+			return fmt.Errorf("adsbdb client is nil")
+		}
+
+		m.adsbdb = client
+		return nil
+	}
+}
+
 // New creates a monitor from application configuration.
-func New(cfg config.Config) (*Monitor, error) {
+func New(cfg config.Config, opts ...Option) (*Monitor, error) {
 	client, err := tar1090.NewClient(cfg.Tar1090URL)
 	if err != nil {
 		return nil, fmt.Errorf("create tar1090 client: %w", err)
 	}
+	adsbdbClient, err := adsbdb.NewClient()
+	if err != nil {
+		return nil, fmt.Errorf("create adsbdb client: %w", err)
+	}
 
 	monitor := &Monitor{
 		cfg:    cfg,
+		adsbdb: adsbdbClient,
 		client: client,
 	}
+	for _, opt := range opts {
+		if opt == nil {
+			continue
+		}
+		if err := opt(monitor); err != nil {
+			return nil, err
+		}
+	}
+
 	seenAircraft, err := monitor.loadSeenAircraft()
 	if err != nil {
 		return nil, fmt.Errorf("load seen aircraft: %w", err)
@@ -91,7 +130,12 @@ func (m *Monitor) FetchAndCheck(ctx context.Context) error {
 	return nil
 }
 
-func (m *Monitor) postAircraft(_ context.Context, _ tar1090.Aircraft) error {
+func (m *Monitor) postAircraft(ctx context.Context, aircraft tar1090.Aircraft) error {
+	_, err := m.adsbdb.Aircraft(ctx, aircraft.Hex)
+	if err != nil {
+		slog.WarnContext(ctx, "Error looking up aircraft details", "hex", aircraft.Hex, "error", err)
+	}
+
 	return nil
 }
 

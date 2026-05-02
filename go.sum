@@ -4,3 +4,5 @@ github.com/kelseyhightower/envconfig v1.4.0 h1:Im6hONhd3pLkfDFsbRgu68RDNkGF1r3dv
 github.com/kelseyhightower/envconfig v1.4.0/go.mod h1:cccZRl6mQpaq41TPp5QxidR+Sa3axMbJDNb//FQX6Gg=
 github.com/lmittmann/tint v1.1.3 h1:Hv4EaHWXQr+GTFnOU4VKf8UvAtZgn0VuKT+G0wFlO3I=
 github.com/lmittmann/tint v1.1.3/go.mod h1:HIS3gSy7qNwGCj+5oRjAutErFBl4BzdQP6cJZ0NfMwE=
+github.com/nint8835/go-adsbdb v0.0.0-20260502173133-37bb0556911d h1:s2ZFlH2Kl5ZZGbEBZ5ik8raeZ5LmPEG8TaoWeJM1WwU=
+github.com/nint8835/go-adsbdb v0.0.0-20260502173133-37bb0556911d/go.mod h1:JW5XfWjYiIxUsPCca0Vk/OY2miw8fWEXIfrYHrnTa40=
