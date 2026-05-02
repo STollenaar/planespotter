@@ -22,7 +22,7 @@ type Aircraft struct {
 	Description       string             `json:"desc,omitempty"`
 	OwnOp             string             `json:"ownOp,omitempty"`
 	Year              string             `json:"year,omitempty"`
-	AltitudeBaro      BarometricAltitude `json:"alt_baro,omitempty"`
+	AltitudeBaro      BarometricAltitude `json:"alt_baro"`
 	AltitudeGeom      *int               `json:"alt_geom,omitempty"`
 	GroundSpeed       *float64           `json:"gs,omitempty"`
 	IndicatedAirspeed *int               `json:"ias,omitempty"`
