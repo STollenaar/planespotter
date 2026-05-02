@@ -47,6 +47,13 @@ func WithADSBDBClient(client interface {
 
 // New creates a monitor from application configuration.
 func New(cfg config.Config, opts ...Option) (*Monitor, error) {
+	slog.Debug(
+		"Creating monitor",
+		"tar1090_url", cfg.Tar1090URL,
+		"monitor_interval", cfg.MonitorInterval,
+		"seen_aircraft_path", cfg.SeenAircraftPath,
+	)
+
 	client, err := tar1090.NewClient(cfg.Tar1090URL)
 	if err != nil {
 		return nil, fmt.Errorf("create tar1090 client: %w", err)
@@ -75,12 +82,15 @@ func New(cfg config.Config, opts ...Option) (*Monitor, error) {
 		return nil, fmt.Errorf("load seen aircraft: %w", err)
 	}
 	monitor.seenAircraft = seenAircraft
+	slog.Debug("Loaded seen aircraft", "count", len(seenAircraft))
 
 	return monitor, nil
 }
 
 // Run fetches aircraft immediately, then continues fetching on the configured interval.
 func (m *Monitor) Run(ctx context.Context) error {
+	slog.DebugContext(ctx, "Starting monitor", "interval", m.cfg.MonitorInterval)
+
 	if err := m.FetchAndCheck(ctx); err != nil {
 		return fmt.Errorf("fetch and check: %w", err)
 	}
@@ -91,6 +101,7 @@ func (m *Monitor) Run(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
+			slog.DebugContext(ctx, "Stopping monitor", "error", ctx.Err())
 			return ctx.Err()
 		case <-ticker.C:
 			if err := m.FetchAndCheck(ctx); err != nil {
@@ -102,16 +113,35 @@ func (m *Monitor) Run(ctx context.Context) error {
 
 // FetchAndCheck fetches aircraft, posts newly-seen aircraft, and persists seen state.
 func (m *Monitor) FetchAndCheck(ctx context.Context) error {
+	slog.DebugContext(ctx, "Fetching aircraft")
+
 	response, err := m.client.FetchAircraft(ctx)
 	if err != nil {
 		return fmt.Errorf("fetch aircraft: %w", err)
 	}
+	slog.DebugContext(
+		ctx,
+		"Fetched aircraft",
+		"aircraft_count", len(response.Aircraft),
+		"messages", response.Messages,
+		"now", response.Now,
+	)
 
 	seenNewAircraft := false
+	newAircraftCount := 0
 	for _, aircraft := range response.Aircraft {
 		if aircraft.Hex == "" || m.seenAircraft[aircraft.Hex] {
 			continue
 		}
+
+		slog.InfoContext(
+			ctx,
+			"Found new aircraft",
+			"hex", aircraft.Hex,
+			"flight", aircraft.Flight,
+			"registration", aircraft.Registration,
+			"type", aircraft.AircraftType,
+		)
 
 		if err := m.postAircraft(ctx, aircraft); err != nil {
 			return fmt.Errorf("post aircraft %s: %w", aircraft.Hex, err)
@@ -119,12 +149,22 @@ func (m *Monitor) FetchAndCheck(ctx context.Context) error {
 
 		m.seenAircraft[aircraft.Hex] = true
 		seenNewAircraft = true
+		newAircraftCount++
 	}
 
 	if seenNewAircraft {
 		if err := m.saveSeenAircraft(); err != nil {
 			return fmt.Errorf("save seen aircraft: %w", err)
 		}
+		slog.DebugContext(
+			ctx,
+			"Saved seen aircraft",
+			"new_aircraft_count", newAircraftCount,
+			"seen_aircraft_count", len(m.seenAircraft),
+			"path", m.cfg.SeenAircraftPath,
+		)
+	} else {
+		slog.DebugContext(ctx, "No new aircraft found", "seen_aircraft_count", len(m.seenAircraft))
 	}
 
 	return nil
