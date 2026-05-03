@@ -19,6 +19,7 @@ type Config struct {
 	Tar1090URL             string        `split_words:"true" required:"true"`
 	MonitorInterval        time.Duration `split_words:"true" default:"15s"`
 	MaxAltitude            int           `split_words:"true" default:"10000"`
+	CallsignWaitReceives   int           `split_words:"true" default:"4"`
 	SeenAircraftPath       string        `split_words:"true" default:"seen.json"`
 	DiscordWebhookURL      string        `split_words:"true" required:"true"`
 	DiscordWebhookThreadID string        `split_words:"true"`

@@ -281,6 +281,171 @@ func TestFetchAndCheckLooksUpFlightRouteForCallsign(t *testing.T) {
 	}
 }
 
+func TestFetchAndCheckWaitsForCallsignBeforePosting(t *testing.T) {
+	server := aircraftSequenceServer(t, []aircraftResponse{
+		{statusCode: http.StatusOK, body: `{"now":1,"messages":0,"aircraft":[{"hex":"abc123"}]}`},
+		{
+			statusCode: http.StatusOK,
+			body:       `{"now":2,"messages":1,"aircraft":[{"hex":"abc123","flight":"ABC123  "}]}`,
+		},
+	})
+	defer server.Close()
+
+	path := filepath.Join(t.TempDir(), "seen.json")
+	sender := &recordingMessageSender{}
+	adsbdbClient := &recordingADSBDBClient{
+		route: adsbdb.FlightRoute{
+			Callsign: "ABC123",
+			Origin: adsbdb.Airport{
+				IATACode:     "YYT",
+				Municipality: "St. John's",
+			},
+			Destination: adsbdb.Airport{
+				IATACode:     "YYZ",
+				Municipality: "Toronto",
+			},
+		},
+	}
+	mon := newTestMonitorWithConfigAndOptions(
+		t,
+		config.Config{
+			Tar1090URL:           server.URL,
+			MonitorInterval:      time.Minute,
+			SeenAircraftPath:     path,
+			CallsignWaitReceives: 3,
+		},
+		monitor.WithADSBDBClient(adsbdbClient),
+		monitor.WithMessageSender(sender),
+	)
+
+	if err := mon.FetchAndCheck(context.Background()); err != nil {
+		t.Fatalf("FetchAndCheck() first error = %v", err)
+	}
+	assertFileDoesNotExist(t, path)
+	if len(sender.messages) != 0 {
+		t.Fatalf("sent message count after first fetch = %d, want 0", len(sender.messages))
+	}
+	if len(adsbdbClient.identifiers) != 0 {
+		t.Fatalf("adsbdb Aircraft() identifiers after first fetch = %#v, want none", adsbdbClient.identifiers)
+	}
+
+	if err := mon.FetchAndCheck(context.Background()); err != nil {
+		t.Fatalf("FetchAndCheck() second error = %v", err)
+	}
+	assertSeenFile(t, path, map[string]bool{"abc123": true})
+	if len(sender.messages) != 1 {
+		t.Fatalf("sent message count after second fetch = %d, want 1", len(sender.messages))
+	}
+	if sender.messages[0].Aircraft.Flight != "ABC123  " {
+		t.Fatalf("sent aircraft flight = %q, want ABC123 with padding", sender.messages[0].Aircraft.Flight)
+	}
+	if !reflect.DeepEqual(adsbdbClient.identifiers, []string{"abc123"}) {
+		t.Fatalf("adsbdb Aircraft() identifiers = %#v, want abc123", adsbdbClient.identifiers)
+	}
+	if !reflect.DeepEqual(adsbdbClient.callsigns, []string{"ABC123"}) {
+		t.Fatalf("adsbdb Callsign() callsigns = %#v, want ABC123", adsbdbClient.callsigns)
+	}
+}
+
+func TestFetchAndCheckPostsWithoutCallsignAfterWaitReceives(t *testing.T) {
+	server := aircraftSequenceServer(t, []aircraftResponse{
+		{statusCode: http.StatusOK, body: `{"now":1,"messages":0,"aircraft":[{"hex":"abc123"}]}`},
+		{statusCode: http.StatusOK, body: `{"now":2,"messages":1,"aircraft":[{"hex":"abc123"}]}`},
+	})
+	defer server.Close()
+
+	path := filepath.Join(t.TempDir(), "seen.json")
+	sender := &recordingMessageSender{}
+	adsbdbClient := &recordingADSBDBClient{}
+	mon := newTestMonitorWithConfigAndOptions(
+		t,
+		config.Config{
+			Tar1090URL:           server.URL,
+			MonitorInterval:      time.Minute,
+			SeenAircraftPath:     path,
+			CallsignWaitReceives: 2,
+		},
+		monitor.WithADSBDBClient(adsbdbClient),
+		monitor.WithMessageSender(sender),
+	)
+
+	if err := mon.FetchAndCheck(context.Background()); err != nil {
+		t.Fatalf("FetchAndCheck() first error = %v", err)
+	}
+	assertFileDoesNotExist(t, path)
+	if len(sender.messages) != 0 {
+		t.Fatalf("sent message count after first fetch = %d, want 0", len(sender.messages))
+	}
+
+	if err := mon.FetchAndCheck(context.Background()); err != nil {
+		t.Fatalf("FetchAndCheck() second error = %v", err)
+	}
+	assertSeenFile(t, path, map[string]bool{"abc123": true})
+	if len(sender.messages) != 1 {
+		t.Fatalf("sent message count after second fetch = %d, want 1", len(sender.messages))
+	}
+	if sender.messages[0].Aircraft.Flight != "" {
+		t.Fatalf("sent aircraft flight = %q, want empty", sender.messages[0].Aircraft.Flight)
+	}
+	if !reflect.DeepEqual(adsbdbClient.identifiers, []string{"abc123"}) {
+		t.Fatalf("adsbdb Aircraft() identifiers = %#v, want abc123", adsbdbClient.identifiers)
+	}
+	if len(adsbdbClient.callsigns) != 0 {
+		t.Fatalf("adsbdb Callsign() callsigns = %#v, want none", adsbdbClient.callsigns)
+	}
+}
+
+func TestFetchAndCheckPostsPendingAircraftWhenNoLongerReceived(t *testing.T) {
+	server := aircraftSequenceServer(t, []aircraftResponse{
+		{
+			statusCode: http.StatusOK,
+			body:       `{"now":1,"messages":0,"aircraft":[{"hex":"abc123","r":"C-GABC","t":"B738"}]}`,
+		},
+		{statusCode: http.StatusOK, body: `{"now":2,"messages":1,"aircraft":[]}`},
+	})
+	defer server.Close()
+
+	path := filepath.Join(t.TempDir(), "seen.json")
+	sender := &recordingMessageSender{}
+	adsbdbClient := &recordingADSBDBClient{}
+	mon := newTestMonitorWithConfigAndOptions(
+		t,
+		config.Config{
+			Tar1090URL:           server.URL,
+			MonitorInterval:      time.Minute,
+			SeenAircraftPath:     path,
+			CallsignWaitReceives: 3,
+		},
+		monitor.WithADSBDBClient(adsbdbClient),
+		monitor.WithMessageSender(sender),
+	)
+
+	if err := mon.FetchAndCheck(context.Background()); err != nil {
+		t.Fatalf("FetchAndCheck() first error = %v", err)
+	}
+	assertFileDoesNotExist(t, path)
+	if len(sender.messages) != 0 {
+		t.Fatalf("sent message count after first fetch = %d, want 0", len(sender.messages))
+	}
+
+	if err := mon.FetchAndCheck(context.Background()); err != nil {
+		t.Fatalf("FetchAndCheck() second error = %v", err)
+	}
+	assertSeenFile(t, path, map[string]bool{"abc123": true})
+	if len(sender.messages) != 1 {
+		t.Fatalf("sent message count after second fetch = %d, want 1", len(sender.messages))
+	}
+	if sender.messages[0].Aircraft.Registration != "C-GABC" {
+		t.Fatalf("sent aircraft registration = %q, want C-GABC", sender.messages[0].Aircraft.Registration)
+	}
+	if !reflect.DeepEqual(adsbdbClient.identifiers, []string{"abc123"}) {
+		t.Fatalf("adsbdb Aircraft() identifiers = %#v, want abc123", adsbdbClient.identifiers)
+	}
+	if len(adsbdbClient.callsigns) != 0 {
+		t.Fatalf("adsbdb Callsign() callsigns = %#v, want none", adsbdbClient.callsigns)
+	}
+}
+
 func TestFetchAndCheckSendsNewAircraftMessages(t *testing.T) {
 	server := aircraftServer(
 		t,
@@ -566,9 +731,10 @@ func newTestMonitorWithOptions(
 	t.Helper()
 
 	return newTestMonitorWithConfigAndOptions(t, config.Config{
-		Tar1090URL:       tar1090URL,
-		MonitorInterval:  time.Minute,
-		SeenAircraftPath: path,
+		Tar1090URL:           tar1090URL,
+		MonitorInterval:      time.Minute,
+		CallsignWaitReceives: 0,
+		SeenAircraftPath:     path,
 	}, opts...)
 }
 
@@ -585,6 +751,11 @@ func newTestMonitorWithConfigAndOptions(
 	}
 
 	return monitor
+}
+
+type aircraftResponse struct {
+	statusCode int
+	body       string
 }
 
 type recordingADSBDBClient struct {
@@ -629,6 +800,21 @@ func aircraftServer(t *testing.T, statusCode int, body string) *httptest.Server 
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(statusCode)
 		_, _ = w.Write([]byte(body))
+	}))
+}
+
+func aircraftSequenceServer(t *testing.T, responses []aircraftResponse) *httptest.Server {
+	t.Helper()
+
+	requestCount := 0
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		response := responses[requestCount]
+		if requestCount < len(responses)-1 {
+			requestCount++
+		}
+
+		w.WriteHeader(response.statusCode)
+		_, _ = w.Write([]byte(response.body))
 	}))
 }
 

@@ -25,6 +25,12 @@ type Monitor struct {
 	client       *tar1090.Client
 	messages     aircraftMessageSender
 	seenAircraft map[string]bool
+	pending      map[string]pendingAircraft
+}
+
+type pendingAircraft struct {
+	aircraft tar1090.Aircraft
+	receives int
 }
 
 type aircraftLookupClient interface {
@@ -75,6 +81,7 @@ func New(cfg config.Config, opts ...Option) (*Monitor, error) {
 		"tar1090_url", cfg.Tar1090URL,
 		"monitor_interval", cfg.MonitorInterval,
 		"max_altitude", cfg.MaxAltitude,
+		"callsign_wait_receives", cfg.CallsignWaitReceives,
 		"seen_aircraft_path", cfg.SeenAircraftPath,
 	)
 
@@ -102,6 +109,7 @@ func New(cfg config.Config, opts ...Option) (*Monitor, error) {
 		adsbdb:   adsbdbClient,
 		client:   client,
 		messages: messageSender,
+		pending:  map[string]pendingAircraft{},
 	}
 	for _, opt := range opts {
 		if opt == nil {
@@ -164,17 +172,24 @@ func (m *Monitor) FetchAndCheck(ctx context.Context) error {
 
 	seenNewAircraft := false
 	newAircraftCount := 0
+	receivedAircraft := map[string]bool{}
 	for _, aircraft := range response.Aircraft {
 		if aircraft.Hex == "" {
 			m.logIgnoredAircraft(ctx, aircraft, "missing_hex")
 			continue
 		}
+		receivedAircraft[aircraft.Hex] = true
 		if reason, attrs := m.aircraftMaxAltitudeIgnoreReason(aircraft); reason != "" {
 			m.logIgnoredAircraft(ctx, aircraft, reason, attrs...)
 			continue
 		}
 		if m.seenAircraft[aircraft.Hex] {
+			delete(m.pending, aircraft.Hex)
 			m.logIgnoredAircraft(ctx, aircraft, "already_seen")
+			continue
+		}
+
+		if !m.shouldPostAircraft(ctx, aircraft) {
 			continue
 		}
 
@@ -187,13 +202,27 @@ func (m *Monitor) FetchAndCheck(ctx context.Context) error {
 			"type", aircraft.AircraftType,
 		)
 
-		if err := m.postAircraft(ctx, aircraft); err != nil {
-			return fmt.Errorf("post aircraft %s: %w", aircraft.Hex, err)
+		if err := m.postAndMarkSeen(ctx, aircraft); err != nil {
+			return err
+		}
+		seenNewAircraft = true
+		newAircraftCount++
+	}
+	for hex, pending := range m.pending {
+		if receivedAircraft[hex] || m.seenAircraft[hex] {
+			continue
 		}
 
-		m.seenAircraft[aircraft.Hex] = true
-		if err := m.saveSeenAircraft(); err != nil {
-			return fmt.Errorf("save seen aircraft: %w", err)
+		slog.InfoContext(
+			ctx,
+			"Posting aircraft after it stopped being received before callsign was available",
+			"hex", hex,
+			"receives", pending.receives,
+			"callsign_wait_receives", m.cfg.CallsignWaitReceives,
+		)
+
+		if err := m.postAndMarkSeen(ctx, pending.aircraft); err != nil {
+			return err
 		}
 		seenNewAircraft = true
 		newAircraftCount++
@@ -212,6 +241,56 @@ func (m *Monitor) FetchAndCheck(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func (m *Monitor) postAndMarkSeen(ctx context.Context, aircraft tar1090.Aircraft) error {
+	if err := m.postAircraft(ctx, aircraft); err != nil {
+		return fmt.Errorf("post aircraft %s: %w", aircraft.Hex, err)
+	}
+
+	m.seenAircraft[aircraft.Hex] = true
+	delete(m.pending, aircraft.Hex)
+	if err := m.saveSeenAircraft(); err != nil {
+		return fmt.Errorf("save seen aircraft: %w", err)
+	}
+
+	return nil
+}
+
+func (m *Monitor) shouldPostAircraft(ctx context.Context, aircraft tar1090.Aircraft) bool {
+	if strings.TrimSpace(aircraft.Flight) != "" {
+		delete(m.pending, aircraft.Hex)
+		return true
+	}
+
+	if m.cfg.CallsignWaitReceives <= 0 {
+		return true
+	}
+
+	pending := m.pending[aircraft.Hex]
+	pending.aircraft = aircraft
+	pending.receives++
+	m.pending[aircraft.Hex] = pending
+
+	if pending.receives >= m.cfg.CallsignWaitReceives {
+		slog.InfoContext(
+			ctx,
+			"Posting aircraft after waiting for callsign",
+			"hex", aircraft.Hex,
+			"receives", pending.receives,
+			"callsign_wait_receives", m.cfg.CallsignWaitReceives,
+		)
+		return true
+	}
+
+	slog.InfoContext(
+		ctx,
+		"Waiting for aircraft callsign",
+		"hex", aircraft.Hex,
+		"receives", pending.receives,
+		"callsign_wait_receives", m.cfg.CallsignWaitReceives,
+	)
+	return false
 }
 
 func (m *Monitor) logIgnoredAircraft(
