@@ -390,6 +390,8 @@ func (m *Monitor) flightRoute(ctx context.Context, aircraft tar1090.Aircraft) (*
 		return nil, nil
 	}
 
+	correctAirline(callsign, &route)
+
 	return &route, nil
 }
 

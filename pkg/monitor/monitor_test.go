@@ -288,6 +288,87 @@ func TestFetchAndCheckLooksUpFlightRouteForCallsign(t *testing.T) {
 	}
 }
 
+func TestFetchAndCheckCorrectsKnownBadAirlineData(t *testing.T) {
+	tests := []struct {
+		name         string
+		callsign     string
+		callsignICAO *string
+		wantAirline  adsbdb.Airline
+	}{
+		{
+			name:     "air canada rouge",
+			callsign: "ROU123",
+			wantAirline: adsbdb.Airline{
+				Name:       "Air Canada Rouge",
+				ICAO:       "ROU",
+				IATA:       stringPtr("RV"),
+				Country:    "Canada",
+				CountryISO: "CA",
+				Callsign:   stringPtr("ROUGE"),
+			},
+		},
+		{
+			name:         "provincial airlines",
+			callsign:     "PVL7682",
+			callsignICAO: stringPtr("PVL7682"),
+			wantAirline: adsbdb.Airline{
+				Name:       "PAL Airlines",
+				ICAO:       "PVL",
+				IATA:       stringPtr("PB"),
+				Country:    "Canada",
+				CountryISO: "CA",
+				Callsign:   stringPtr("PROVINCIAL"),
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := aircraftServer(
+				t,
+				http.StatusOK,
+				`{"now":1,"messages":0,"aircraft":[{"hex":"abc123","flight":"`+tt.callsign+`  "}]}`,
+			)
+			defer server.Close()
+
+			path := filepath.Join(t.TempDir(), "seen.json")
+			sender := &recordingMessageSender{}
+			adsbdbClient := &recordingADSBDBClient{
+				route: adsbdb.FlightRoute{
+					Callsign:     tt.callsign,
+					CallsignICAO: tt.callsignICAO,
+					Airline: &adsbdb.Airline{
+						Name:       "Incorrect Airline",
+						ICAO:       "BAD",
+						Country:    "United States",
+						CountryISO: "US",
+					},
+				},
+			}
+			mon := newTestMonitorWithOptions(
+				t,
+				server.URL,
+				path,
+				monitor.WithADSBDBClient(adsbdbClient),
+				monitor.WithMessageSender(sender),
+			)
+			if err := mon.FetchAndCheck(context.Background()); err != nil {
+				t.Fatalf("FetchAndCheck() error = %v", err)
+			}
+
+			if len(sender.messages) != 1 {
+				t.Fatalf("sent message count = %d, want 1", len(sender.messages))
+			}
+			if sender.messages[0].Route == nil {
+				t.Fatal("sent route is nil")
+			}
+			if !reflect.DeepEqual(sender.messages[0].Route.Airline, &tt.wantAirline) {
+				t.Fatalf("sent airline = %#v, want %#v", sender.messages[0].Route.Airline, &tt.wantAirline)
+			}
+		})
+	}
+}
+
 func TestFetchAndCheckWaitsForCallsignBeforePosting(t *testing.T) {
 	server := aircraftSequenceServer(t, []aircraftResponse{
 		{statusCode: http.StatusOK, body: `{"now":1,"messages":0,"aircraft":[{"hex":"abc123"}]}`},
@@ -889,4 +970,8 @@ func seenFileMatches(path string, want map[string]bool) bool {
 	}
 
 	return true
+}
+
+func stringPtr(value string) *string {
+	return &value
 }
