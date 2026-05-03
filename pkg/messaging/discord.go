@@ -116,7 +116,7 @@ func fields(
 	}
 
 	addField("Aircraft", identityLine(aircraft, details))
-	addField("Operator", firstNonEmpty(airline(route), detailOwner(details)))
+	addField("Operator", firstNonEmpty(airline(route), detailOwner(details), aircraft.OwnOp))
 	addField("Route", routeDescription(route))
 	if len(fields) == 0 {
 		addField("Aircraft", "A previously unseen aircraft was picked up by tar1090.")
