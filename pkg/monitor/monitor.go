@@ -18,6 +18,8 @@ import (
 	"github.com/nint8835/planespotter/pkg/tar1090"
 )
 
+const adsbdbUserAgent = "planespotter (github.com/nint8835/planespotter)"
+
 // Monitor periodically fetches tar1090 aircraft data and posts newly-seen aircraft.
 type Monitor struct {
 	cfg          config.Config
@@ -89,7 +91,9 @@ func New(cfg config.Config, opts ...Option) (*Monitor, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create tar1090 client: %w", err)
 	}
-	adsbdbClient, err := adsbdb.NewClient()
+	adsbdbClient, err := adsbdb.NewClient(
+		adsbdb.WithUserAgent(adsbdbUserAgent),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("create adsbdb client: %w", err)
 	}
