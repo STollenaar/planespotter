@@ -169,6 +169,8 @@ func (m *Monitor) FetchAndCheck(ctx context.Context) error {
 			continue
 		}
 
+		fmt.Printf("New aircraft: %#+v\n", aircraft)
+
 		slog.InfoContext(
 			ctx,
 			"Found new aircraft",
