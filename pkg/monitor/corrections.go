@@ -12,18 +12,18 @@ var airlineCorrections = map[string]adsbdb.Airline{
 	"PVL": {
 		Name:       "PAL Airlines",
 		ICAO:       "PVL",
-		IATA:       stringPtr("PB"),
+		IATA:       new("PB"),
 		Country:    "Canada",
 		CountryISO: "CA",
-		Callsign:   stringPtr("PROVINCIAL"),
+		Callsign:   new("PROVINCIAL"),
 	},
 	"ROU": {
 		Name:       "Air Canada Rouge",
 		ICAO:       "ROU",
-		IATA:       stringPtr("RV"),
+		IATA:       new("RV"),
 		Country:    "Canada",
 		CountryISO: "CA",
-		Callsign:   stringPtr("ROUGE"),
+		Callsign:   new("ROUGE"),
 	},
 }
 
@@ -51,8 +51,4 @@ func callsignAirlineCode(callsign string) string {
 		return ""
 	}
 	return callsign[:3]
-}
-
-func stringPtr(value string) *string {
-	return &value
 }

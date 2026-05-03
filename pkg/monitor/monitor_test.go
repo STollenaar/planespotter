@@ -301,23 +301,23 @@ func TestFetchAndCheckCorrectsKnownBadAirlineData(t *testing.T) {
 			wantAirline: adsbdb.Airline{
 				Name:       "Air Canada Rouge",
 				ICAO:       "ROU",
-				IATA:       stringPtr("RV"),
+				IATA:       new("RV"),
 				Country:    "Canada",
 				CountryISO: "CA",
-				Callsign:   stringPtr("ROUGE"),
+				Callsign:   new("ROUGE"),
 			},
 		},
 		{
 			name:         "provincial airlines",
 			callsign:     "PVL7682",
-			callsignICAO: stringPtr("PVL7682"),
+			callsignICAO: new("PVL7682"),
 			wantAirline: adsbdb.Airline{
 				Name:       "PAL Airlines",
 				ICAO:       "PVL",
-				IATA:       stringPtr("PB"),
+				IATA:       new("PB"),
 				Country:    "Canada",
 				CountryISO: "CA",
-				Callsign:   stringPtr("PROVINCIAL"),
+				Callsign:   new("PROVINCIAL"),
 			},
 		},
 	}
@@ -970,8 +970,4 @@ func seenFileMatches(path string, want map[string]bool) bool {
 	}
 
 	return true
-}
-
-func stringPtr(value string) *string {
-	return &value
 }
