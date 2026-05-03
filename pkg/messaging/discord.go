@@ -85,6 +85,7 @@ func buildPayload(message AircraftMessage) webhooks.MessagePayload {
 	embed := webhooks.Embed{
 		Author: &webhooks.EmbedAuthor{Name: "New aircraft spotted"},
 		Title:  title,
+		URL:    flightInfoURL(aircraft),
 		Color:  embedColor(aircraft),
 		Fields: fields(aircraft, message.Details, message.Route),
 		Footer: footer(aircraft, message.Details),
@@ -99,6 +100,15 @@ func buildPayload(message AircraftMessage) webhooks.MessagePayload {
 			Parse: []webhooks.AllowedMentionsParse{},
 		},
 	}
+}
+
+func flightInfoURL(aircraft tar1090.Aircraft) string {
+	identifier := firstNonEmpty(aircraft.Flight, aircraft.Registration)
+	if identifier == "" {
+		return ""
+	}
+
+	return "https://www.flightaware.com/live/flight/" + url.PathEscape(identifier)
 }
 
 func fields(

@@ -80,6 +80,9 @@ func TestDiscordSenderSendsAircraftMessageToThread(t *testing.T) {
 	if embed["title"] != "ABC123" {
 		t.Fatalf("embed title = %#v, want flight title", embed["title"])
 	}
+	if embed["url"] != "https://www.flightaware.com/live/flight/ABC123" {
+		t.Fatalf("embed url = %#v, want FlightAware flight link", embed["url"])
+	}
 	if _, ok := embed["description"]; ok {
 		t.Fatalf("description = %#v, want no description", embed["description"])
 	}
@@ -134,6 +137,35 @@ func TestDiscordSenderUsesCountryNameInFooterWhenFlagCodeIsMissing(t *testing.T)
 	footer := embed["footer"].(map[string]any)
 	if footer["text"] != "Mode S C12345 · Exampleland" {
 		t.Fatalf("footer text = %#v, want country fallback", footer["text"])
+	}
+}
+
+func TestDiscordSenderLinksFlightInfoByRegistrationWithoutFlight(t *testing.T) {
+	var gotPayload map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotPayload); err != nil {
+			t.Errorf("decode payload: %v", err)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	sender, err := messaging.NewDiscordSender(server.URL, "")
+	if err != nil {
+		t.Fatalf("NewDiscordSender() error = %v", err)
+	}
+
+	err = sender.SendAircraft(context.Background(), messaging.AircraftMessage{
+		Aircraft: tar1090.Aircraft{Hex: "c12345", Registration: "C-GABC"},
+	})
+	if err != nil {
+		t.Fatalf("SendAircraft() error = %v", err)
+	}
+
+	embeds := gotPayload["embeds"].([]any)
+	embed := embeds[0].(map[string]any)
+	if embed["url"] != "https://www.flightaware.com/live/flight/C-GABC" {
+		t.Fatalf("embed url = %#v, want FlightAware registration link", embed["url"])
 	}
 }
 
