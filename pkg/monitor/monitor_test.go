@@ -89,7 +89,11 @@ func TestFetchAndCheckIgnoresAircraftAboveMaxBarometricAltitude(t *testing.T) {
 	server := aircraftServer(
 		t,
 		http.StatusOK,
-		`{"now":1,"messages":0,"aircraft":[{"hex":"above","alt_baro":12000},{"hex":"at","alt_baro":10000},{"hex":"below","alt_baro":9000}]}`,
+		`{"now":1,"messages":0,"aircraft":[`+
+			`{"hex":"above","alt_baro":12000},`+
+			`{"hex":"at","alt_baro":10000},`+
+			`{"hex":"below","alt_baro":9000}`+
+			`]}`,
 	)
 	defer server.Close()
 
@@ -124,7 +128,11 @@ func TestFetchAndCheckUsesGeometricAltitudeWhenBarometricAltitudeIsUnavailable(t
 	server := aircraftServer(
 		t,
 		http.StatusOK,
-		`{"now":1,"messages":0,"aircraft":[{"hex":"above","alt_geom":12000},{"hex":"ground","alt_baro":"ground","alt_geom":12000},{"hex":"below","alt_geom":9000}]}`,
+		`{"now":1,"messages":0,"aircraft":[`+
+			`{"hex":"above","alt_geom":12000},`+
+			`{"hex":"ground","alt_baro":"ground","alt_geom":12000},`+
+			`{"hex":"below","alt_geom":9000}`+
+			`]}`,
 	)
 	defer server.Close()
 
