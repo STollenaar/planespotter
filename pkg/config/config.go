@@ -18,6 +18,7 @@ type Config struct {
 	LogLevel               slog.Level    `split_words:"true" default:"INFO"`
 	Tar1090URL             string        `split_words:"true" required:"true"`
 	MonitorInterval        time.Duration `split_words:"true" default:"15s"`
+	MaxAltitude            int           `split_words:"true" default:"10000"`
 	SeenAircraftPath       string        `split_words:"true" default:"seen.json"`
 	DiscordWebhookURL      string        `split_words:"true" required:"true"`
 	DiscordWebhookThreadID string        `split_words:"true"`

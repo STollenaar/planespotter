@@ -74,6 +74,7 @@ func New(cfg config.Config, opts ...Option) (*Monitor, error) {
 		"Creating monitor",
 		"tar1090_url", cfg.Tar1090URL,
 		"monitor_interval", cfg.MonitorInterval,
+		"max_altitude", cfg.MaxAltitude,
 		"seen_aircraft_path", cfg.SeenAircraftPath,
 	)
 
@@ -164,7 +165,7 @@ func (m *Monitor) FetchAndCheck(ctx context.Context) error {
 	seenNewAircraft := false
 	newAircraftCount := 0
 	for _, aircraft := range response.Aircraft {
-		if aircraft.Hex == "" || m.seenAircraft[aircraft.Hex] {
+		if aircraft.Hex == "" || m.aircraftAboveMaxAltitude(aircraft) || m.seenAircraft[aircraft.Hex] {
 			continue
 		}
 
@@ -202,6 +203,24 @@ func (m *Monitor) FetchAndCheck(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func (m *Monitor) aircraftAboveMaxAltitude(aircraft tar1090.Aircraft) bool {
+	if m.cfg.MaxAltitude <= 0 {
+		return false
+	}
+
+	if aircraft.AltitudeBaro.Feet != nil {
+		return *aircraft.AltitudeBaro.Feet > m.cfg.MaxAltitude
+	}
+	if aircraft.AltitudeBaro.Ground {
+		return false
+	}
+	if aircraft.AltitudeGeom != nil {
+		return *aircraft.AltitudeGeom > m.cfg.MaxAltitude
+	}
+
+	return false
 }
 
 func (m *Monitor) postAircraft(ctx context.Context, aircraft tar1090.Aircraft) error {

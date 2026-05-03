@@ -85,6 +85,67 @@ func TestFetchAndCheckPersistsMultipleNewAircraft(t *testing.T) {
 	assertSeenFile(t, path, map[string]bool{"abc123": true, "def456": true})
 }
 
+func TestFetchAndCheckIgnoresAircraftAboveMaxBarometricAltitude(t *testing.T) {
+	server := aircraftServer(
+		t,
+		http.StatusOK,
+		`{"now":1,"messages":0,"aircraft":[{"hex":"above","alt_baro":12000},{"hex":"at","alt_baro":10000},{"hex":"below","alt_baro":9000}]}`,
+	)
+	defer server.Close()
+
+	path := filepath.Join(t.TempDir(), "seen.json")
+	sender := &recordingMessageSender{}
+	adsbdbClient := &recordingADSBDBClient{}
+	mon := newTestMonitorWithConfigAndOptions(
+		t,
+		config.Config{
+			Tar1090URL:       server.URL,
+			MonitorInterval:  time.Minute,
+			MaxAltitude:      10000,
+			SeenAircraftPath: path,
+		},
+		monitor.WithADSBDBClient(adsbdbClient),
+		monitor.WithMessageSender(sender),
+	)
+	if err := mon.FetchAndCheck(context.Background()); err != nil {
+		t.Fatalf("FetchAndCheck() error = %v", err)
+	}
+
+	assertSeenFile(t, path, map[string]bool{"at": true, "below": true})
+	if !reflect.DeepEqual(adsbdbClient.identifiers, []string{"at", "below"}) {
+		t.Fatalf("adsbdb Aircraft() identifiers = %#v, want at and below", adsbdbClient.identifiers)
+	}
+	if len(sender.messages) != 2 {
+		t.Fatalf("sent message count = %d, want 2", len(sender.messages))
+	}
+}
+
+func TestFetchAndCheckUsesGeometricAltitudeWhenBarometricAltitudeIsUnavailable(t *testing.T) {
+	server := aircraftServer(
+		t,
+		http.StatusOK,
+		`{"now":1,"messages":0,"aircraft":[{"hex":"above","alt_geom":12000},{"hex":"ground","alt_baro":"ground","alt_geom":12000},{"hex":"below","alt_geom":9000}]}`,
+	)
+	defer server.Close()
+
+	path := filepath.Join(t.TempDir(), "seen.json")
+	mon := newTestMonitorWithConfigAndOptions(
+		t,
+		config.Config{
+			Tar1090URL:       server.URL,
+			MonitorInterval:  time.Minute,
+			MaxAltitude:      10000,
+			SeenAircraftPath: path,
+		},
+		monitor.WithADSBDBClient(&recordingADSBDBClient{}),
+	)
+	if err := mon.FetchAndCheck(context.Background()); err != nil {
+		t.Fatalf("FetchAndCheck() error = %v", err)
+	}
+
+	assertSeenFile(t, path, map[string]bool{"below": true, "ground": true})
+}
+
 func TestFetchAndCheckEnhancesNewAircraftWithHex(t *testing.T) {
 	server := aircraftServer(
 		t,
@@ -435,11 +496,21 @@ func newTestMonitorWithOptions(
 ) *monitor.Monitor {
 	t.Helper()
 
-	monitor, err := monitor.New(config.Config{
+	return newTestMonitorWithConfigAndOptions(t, config.Config{
 		Tar1090URL:       tar1090URL,
 		MonitorInterval:  time.Minute,
 		SeenAircraftPath: path,
 	}, opts...)
+}
+
+func newTestMonitorWithConfigAndOptions(
+	t *testing.T,
+	cfg config.Config,
+	opts ...monitor.Option,
+) *monitor.Monitor {
+	t.Helper()
+
+	monitor, err := monitor.New(cfg, opts...)
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
