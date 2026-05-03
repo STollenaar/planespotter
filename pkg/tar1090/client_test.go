@@ -64,6 +64,9 @@ func TestFetchAircraft(t *testing.T) {
 	if aircraft.Latitude == nil || *aircraft.Latitude != 10.0 {
 		t.Fatalf("Latitude = %v, want 10.0", aircraft.Latitude)
 	}
+	if aircraft.DBFlags != tar1090.DBFlagMilitary|tar1090.DBFlagPIA {
+		t.Fatalf("DBFlags = %d, want military and PIA", aircraft.DBFlags)
+	}
 }
 
 func TestBarometricAltitudeGround(t *testing.T) {

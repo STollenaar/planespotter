@@ -85,7 +85,7 @@ func buildPayload(message AircraftMessage) webhooks.MessagePayload {
 	embed := webhooks.Embed{
 		Author: &webhooks.EmbedAuthor{Name: "New aircraft spotted"},
 		Title:  title,
-		Color:  0x2f80ed,
+		Color:  embedColor(aircraft),
 		Fields: fields(aircraft, message.Details, message.Route),
 		Footer: footer(aircraft, message.Details),
 	}
@@ -127,10 +127,26 @@ func footer(aircraft tar1090.Aircraft, details *adsbdb.Aircraft) *webhooks.Embed
 	text := strings.Join(nonEmptyValues(
 		countryFlag(details),
 		modeS(aircraft),
+		dbFlagLabel(aircraft),
 		detailCountry(details),
 	), " · ")
 	if text == "" {
 		return nil
 	}
 	return &webhooks.EmbedFooter{Text: text}
+}
+
+func embedColor(aircraft tar1090.Aircraft) int {
+	switch {
+	case aircraft.DBFlags&tar1090.DBFlagMilitary != 0:
+		return 0xeb5757
+	case aircraft.DBFlags&tar1090.DBFlagInteresting != 0:
+		return 0xf2c94c
+	case aircraft.DBFlags&tar1090.DBFlagPIA != 0:
+		return 0x9b51e0
+	case aircraft.DBFlags&tar1090.DBFlagLADD != 0:
+		return 0x828282
+	default:
+		return 0x2f80ed
+	}
 }

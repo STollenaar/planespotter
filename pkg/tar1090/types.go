@@ -22,6 +22,7 @@ type Aircraft struct {
 	Description       string             `json:"desc,omitempty"`
 	OwnOp             string             `json:"ownOp,omitempty"`
 	Year              string             `json:"year,omitempty"`
+	DBFlags           int                `json:"dbFlags,omitempty"`
 	AltitudeBaro      BarometricAltitude `json:"alt_baro"`
 	AltitudeGeom      *int               `json:"alt_geom,omitempty"`
 	GroundSpeed       *float64           `json:"gs,omitempty"`
@@ -70,6 +71,14 @@ type Aircraft struct {
 	Seen              *float64           `json:"seen,omitempty"`
 	RSSI              *float64           `json:"rssi,omitempty"`
 }
+
+// Database flags from readsb/tar1090's aircraft database.
+const (
+	DBFlagMilitary = 1 << iota
+	DBFlagInteresting
+	DBFlagPIA
+	DBFlagLADD
+)
 
 // Position describes an aircraft position, including stale lastPosition values.
 type Position struct {

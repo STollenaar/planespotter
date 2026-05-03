@@ -97,6 +97,23 @@ func modeS(aircraft tar1090.Aircraft) string {
 	return "Mode S " + hex
 }
 
+func dbFlagLabel(aircraft tar1090.Aircraft) string {
+	var labels []string
+	if aircraft.DBFlags&tar1090.DBFlagMilitary != 0 {
+		labels = append(labels, "Military")
+	}
+	if aircraft.DBFlags&tar1090.DBFlagInteresting != 0 {
+		labels = append(labels, "Interesting")
+	}
+	if aircraft.DBFlags&tar1090.DBFlagPIA != 0 {
+		labels = append(labels, "PIA")
+	}
+	if aircraft.DBFlags&tar1090.DBFlagLADD != 0 {
+		labels = append(labels, "LADD")
+	}
+	return strings.Join(labels, ", ")
+}
+
 func identityLine(aircraft tar1090.Aircraft, details *adsbdb.Aircraft) string {
 	return strings.Join(nonEmptyValues(
 		firstNonEmpty(aircraft.Registration, detailRegistration(details)),

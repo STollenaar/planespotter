@@ -40,6 +40,7 @@ func TestDiscordSenderSendsAircraftMessageToThread(t *testing.T) {
 			Registration: "C-GABC",
 			AircraftType: "B738",
 			Description:  "BOEING 737-800",
+			DBFlags:      tar1090.DBFlagPIA | tar1090.DBFlagLADD,
 		},
 		Route: &adsbdb.FlightRoute{
 			Airline: &adsbdb.Airline{Name: "Example Air"},
@@ -93,8 +94,8 @@ func TestDiscordSenderSendsAircraftMessageToThread(t *testing.T) {
 	if !ok {
 		t.Fatalf("footer = %#v, want object", embed["footer"])
 	}
-	if footer["text"] != "🇨🇦 · Mode S C12345" {
-		t.Fatalf("footer text = %#v, want flag and Mode S", footer["text"])
+	if footer["text"] != "🇨🇦 · Mode S C12345 · PIA, LADD" {
+		t.Fatalf("footer text = %#v, want flag, Mode S, and labels", footer["text"])
 	}
 	allowedMentions, ok := gotPayload["allowed_mentions"].(map[string]any)
 	if !ok {
@@ -166,6 +167,89 @@ func TestDiscordSenderOmitsTimestampForFooterWithoutCountry(t *testing.T) {
 	}
 	if _, ok := embed["timestamp"]; ok {
 		t.Fatalf("timestamp = %#v, want omitted", embed["timestamp"])
+	}
+}
+
+func TestDiscordSenderIncludesDatabaseFlagsInFooter(t *testing.T) {
+	var gotPayload map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotPayload); err != nil {
+			t.Errorf("decode payload: %v", err)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	sender, err := messaging.NewDiscordSender(server.URL, "")
+	if err != nil {
+		t.Fatalf("NewDiscordSender() error = %v", err)
+	}
+
+	err = sender.SendAircraft(context.Background(), messaging.AircraftMessage{
+		Aircraft: tar1090.Aircraft{
+			Hex:     "abc123",
+			DBFlags: tar1090.DBFlagMilitary | tar1090.DBFlagInteresting,
+		},
+	})
+	if err != nil {
+		t.Fatalf("SendAircraft() error = %v", err)
+	}
+
+	embeds := gotPayload["embeds"].([]any)
+	embed := embeds[0].(map[string]any)
+	footer := embed["footer"].(map[string]any)
+	if footer["text"] != "Mode S ABC123 · Military, Interesting" {
+		t.Fatalf("footer text = %#v, want DB flag labels", footer["text"])
+	}
+}
+
+func TestDiscordSenderColorsEmbedForDatabaseFlags(t *testing.T) {
+	tests := []struct {
+		name    string
+		flags   int
+		wantHex int
+	}{
+		{name: "default", flags: 0, wantHex: 0x2f80ed},
+		{name: "military", flags: tar1090.DBFlagMilitary, wantHex: 0xeb5757},
+		{name: "interesting", flags: tar1090.DBFlagInteresting, wantHex: 0xf2c94c},
+		{name: "PIA", flags: tar1090.DBFlagPIA, wantHex: 0x9b51e0},
+		{name: "LADD", flags: tar1090.DBFlagLADD, wantHex: 0x828282},
+		{
+			name:    "military takes priority",
+			flags:   tar1090.DBFlagMilitary | tar1090.DBFlagPIA,
+			wantHex: 0xeb5757,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var gotPayload map[string]any
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if err := json.NewDecoder(r.Body).Decode(&gotPayload); err != nil {
+					t.Errorf("decode payload: %v", err)
+				}
+				w.WriteHeader(http.StatusNoContent)
+			}))
+			defer server.Close()
+
+			sender, err := messaging.NewDiscordSender(server.URL, "")
+			if err != nil {
+				t.Fatalf("NewDiscordSender() error = %v", err)
+			}
+
+			err = sender.SendAircraft(context.Background(), messaging.AircraftMessage{
+				Aircraft: tar1090.Aircraft{Hex: "abc123", DBFlags: tt.flags},
+			})
+			if err != nil {
+				t.Fatalf("SendAircraft() error = %v", err)
+			}
+
+			embeds := gotPayload["embeds"].([]any)
+			embed := embeds[0].(map[string]any)
+			if embed["color"] != float64(tt.wantHex) {
+				t.Fatalf("color = %#v, want %#x", embed["color"], tt.wantHex)
+			}
+		})
 	}
 }
 
