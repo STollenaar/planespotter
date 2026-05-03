@@ -192,6 +192,9 @@ func (m *Monitor) FetchAndCheck(ctx context.Context) error {
 			m.logIgnoredAircraft(ctx, aircraft, "already_seen")
 			continue
 		}
+		if pending, ok := m.pending[aircraft.Hex]; ok {
+			aircraft = mergePendingAircraft(pending.aircraft, aircraft)
+		}
 
 		if !m.shouldPostAircraft(ctx, aircraft) {
 			continue
@@ -272,7 +275,7 @@ func (m *Monitor) shouldPostAircraft(ctx context.Context, aircraft tar1090.Aircr
 	}
 
 	pending := m.pending[aircraft.Hex]
-	pending.aircraft = aircraft
+	pending.aircraft = mergePendingAircraft(pending.aircraft, aircraft)
 	pending.receives++
 	m.pending[aircraft.Hex] = pending
 
@@ -295,6 +298,25 @@ func (m *Monitor) shouldPostAircraft(ctx context.Context, aircraft tar1090.Aircr
 		"callsign_wait_receives", m.cfg.CallsignWaitReceives,
 	)
 	return false
+}
+
+func mergePendingAircraft(previous tar1090.Aircraft, current tar1090.Aircraft) tar1090.Aircraft {
+	fillString(&current.Registration, previous.Registration)
+	fillString(&current.AircraftType, previous.AircraftType)
+	fillString(&current.Description, previous.Description)
+	fillString(&current.OwnOp, previous.OwnOp)
+	fillString(&current.Year, previous.Year)
+	if current.DBFlags == 0 {
+		current.DBFlags = previous.DBFlags
+	}
+
+	return current
+}
+
+func fillString(value *string, fallback string) {
+	if strings.TrimSpace(*value) == "" {
+		*value = fallback
+	}
 }
 
 func (m *Monitor) logIgnoredAircraft(

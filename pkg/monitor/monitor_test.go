@@ -435,6 +435,66 @@ func TestFetchAndCheckWaitsForCallsignBeforePosting(t *testing.T) {
 	}
 }
 
+func TestFetchAndCheckPreservesPendingAircraftIdentityWhenCallsignArrives(t *testing.T) {
+	server := aircraftSequenceServer(t, []aircraftResponse{
+		{
+			statusCode: http.StatusOK,
+			body: `{"now":1,"messages":0,"aircraft":[` +
+				`{"hex":"c00841","r":"C-GSPR","t":"BE30","desc":"BEECH SUPER KING AIR 350","ownOp":"PAL Aerospace"}` +
+				`]}`,
+		},
+		{
+			statusCode: http.StatusOK,
+			body:       `{"now":2,"messages":1,"aircraft":[{"hex":"c00841","flight":"SPR08"}]}`,
+		},
+	})
+	defer server.Close()
+
+	path := filepath.Join(t.TempDir(), "seen.json")
+	sender := &recordingMessageSender{}
+	mon := newTestMonitorWithConfigAndOptions(
+		t,
+		config.Config{
+			Tar1090URL:           server.URL,
+			MonitorInterval:      time.Minute,
+			SeenAircraftPath:     path,
+			CallsignWaitReceives: 3,
+		},
+		monitor.WithADSBDBClient(&recordingADSBDBClient{}),
+		monitor.WithMessageSender(sender),
+	)
+
+	if err := mon.FetchAndCheck(context.Background()); err != nil {
+		t.Fatalf("FetchAndCheck() first error = %v", err)
+	}
+	if len(sender.messages) != 0 {
+		t.Fatalf("sent message count after first fetch = %d, want 0", len(sender.messages))
+	}
+
+	if err := mon.FetchAndCheck(context.Background()); err != nil {
+		t.Fatalf("FetchAndCheck() second error = %v", err)
+	}
+	if len(sender.messages) != 1 {
+		t.Fatalf("sent message count after second fetch = %d, want 1", len(sender.messages))
+	}
+	got := sender.messages[0].Aircraft
+	if got.Flight != "SPR08" {
+		t.Fatalf("sent aircraft flight = %q, want SPR08", got.Flight)
+	}
+	if got.AircraftType != "BE30" {
+		t.Fatalf("sent aircraft type = %q, want BE30", got.AircraftType)
+	}
+	if got.Description != "BEECH SUPER KING AIR 350" {
+		t.Fatalf("sent aircraft description = %q, want BEECH SUPER KING AIR 350", got.Description)
+	}
+	if got.Registration != "C-GSPR" {
+		t.Fatalf("sent aircraft registration = %q, want C-GSPR", got.Registration)
+	}
+	if got.OwnOp != "PAL Aerospace" {
+		t.Fatalf("sent aircraft operator = %q, want PAL Aerospace", got.OwnOp)
+	}
+}
+
 func TestFetchAndCheckPostsWithoutCallsignAfterWaitReceives(t *testing.T) {
 	server := aircraftSequenceServer(t, []aircraftResponse{
 		{statusCode: http.StatusOK, body: `{"now":1,"messages":0,"aircraft":[{"hex":"abc123"}]}`},
