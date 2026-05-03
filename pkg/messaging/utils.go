@@ -62,6 +62,41 @@ func detailOwner(details *adsbdb.Aircraft) string {
 	return details.RegisteredOwner
 }
 
+func detailCountry(details *adsbdb.Aircraft) string {
+	if details == nil || countryFlag(details) != "" {
+		return ""
+	}
+	return details.RegisteredOwnerCountryName
+}
+
+func countryFlag(details *adsbdb.Aircraft) string {
+	if details == nil {
+		return ""
+	}
+
+	code := strings.ToUpper(strings.TrimSpace(details.RegisteredOwnerCountryISOName))
+	if len(code) != 2 || code[0] < 'A' || code[0] > 'Z' || code[1] < 'A' || code[1] > 'Z' {
+		return ""
+	}
+
+	return string([]rune{
+		regionalIndicator(code[0]),
+		regionalIndicator(code[1]),
+	})
+}
+
+func regionalIndicator(letter byte) rune {
+	return 0x1F1E6 + rune(letter-'A')
+}
+
+func modeS(aircraft tar1090.Aircraft) string {
+	hex := strings.ToUpper(strings.TrimSpace(aircraft.Hex))
+	if hex == "" {
+		return ""
+	}
+	return "Mode S " + hex
+}
+
 func identityLine(aircraft tar1090.Aircraft, details *adsbdb.Aircraft) string {
 	return strings.Join(nonEmptyValues(
 		firstNonEmpty(aircraft.Registration, detailRegistration(details)),

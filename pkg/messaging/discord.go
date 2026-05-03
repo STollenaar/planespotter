@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 
 	adsbdb "github.com/nint8835/go-adsbdb"
 	webhooks "github.com/typical-developers/discord-webhooks-go/v2"
@@ -84,12 +83,11 @@ func buildPayload(message AircraftMessage) webhooks.MessagePayload {
 	)
 
 	embed := webhooks.Embed{
-		Author:    &webhooks.EmbedAuthor{Name: "New aircraft spotted"},
-		Title:     title,
-		Color:     0x2f80ed,
-		Fields:    fields(aircraft, message.Details, message.Route),
-		Timestamp: time.Now().UTC().Format(time.RFC3339),
-		Footer:    footer(aircraft),
+		Author: &webhooks.EmbedAuthor{Name: "New aircraft spotted"},
+		Title:  title,
+		Color:  0x2f80ed,
+		Fields: fields(aircraft, message.Details, message.Route),
+		Footer: footer(aircraft, message.Details),
 	}
 	if message.Details != nil && message.Details.URLPhoto != nil {
 		embed.Image = &webhooks.EmbedImage{URL: *message.Details.URLPhoto}
@@ -125,10 +123,14 @@ func fields(
 	return fields
 }
 
-func footer(aircraft tar1090.Aircraft) *webhooks.EmbedFooter {
-	hex := strings.ToUpper(strings.TrimSpace(aircraft.Hex))
-	if hex == "" {
+func footer(aircraft tar1090.Aircraft, details *adsbdb.Aircraft) *webhooks.EmbedFooter {
+	text := strings.Join(nonEmptyValues(
+		countryFlag(details),
+		modeS(aircraft),
+		detailCountry(details),
+	), " · ")
+	if text == "" {
 		return nil
 	}
-	return &webhooks.EmbedFooter{Text: "Mode S " + hex}
+	return &webhooks.EmbedFooter{Text: text}
 }
