@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -18,6 +20,11 @@ import (
 	"github.com/nint8835/planespotter/pkg/messaging"
 	"github.com/nint8835/planespotter/pkg/monitor"
 )
+
+func TestMain(m *testing.M) {
+	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	os.Exit(m.Run())
+}
 
 func TestNewInitializesEmptySeenAircraftWhenFileDoesNotExist(t *testing.T) {
 	server := aircraftServer(t, http.StatusOK, `{"now":1,"messages":0,"aircraft":[]}`)
