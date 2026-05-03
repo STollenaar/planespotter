@@ -165,7 +165,16 @@ func (m *Monitor) FetchAndCheck(ctx context.Context) error {
 	seenNewAircraft := false
 	newAircraftCount := 0
 	for _, aircraft := range response.Aircraft {
-		if aircraft.Hex == "" || m.aircraftOutsideMaxAltitude(aircraft) || m.seenAircraft[aircraft.Hex] {
+		if aircraft.Hex == "" {
+			m.logIgnoredAircraft(ctx, aircraft, "missing_hex")
+			continue
+		}
+		if reason, attrs := m.aircraftMaxAltitudeIgnoreReason(aircraft); reason != "" {
+			m.logIgnoredAircraft(ctx, aircraft, reason, attrs...)
+			continue
+		}
+		if m.seenAircraft[aircraft.Hex] {
+			m.logIgnoredAircraft(ctx, aircraft, "already_seen")
 			continue
 		}
 
@@ -205,22 +214,54 @@ func (m *Monitor) FetchAndCheck(ctx context.Context) error {
 	return nil
 }
 
-func (m *Monitor) aircraftOutsideMaxAltitude(aircraft tar1090.Aircraft) bool {
+func (m *Monitor) logIgnoredAircraft(
+	ctx context.Context,
+	aircraft tar1090.Aircraft,
+	reason string,
+	attrs ...any,
+) {
+	logAttrs := []any{
+		"reason", reason,
+		"hex", aircraft.Hex,
+		"flight", aircraft.Flight,
+		"registration", aircraft.Registration,
+		"type", aircraft.AircraftType,
+	}
+	logAttrs = append(logAttrs, attrs...)
+
+	slog.InfoContext(ctx, "Ignoring aircraft", logAttrs...)
+}
+
+func (m *Monitor) aircraftMaxAltitudeIgnoreReason(aircraft tar1090.Aircraft) (string, []any) {
 	if m.cfg.MaxAltitude <= 0 {
-		return false
+		return "", nil
 	}
 
 	if aircraft.AltitudeBaro.Feet != nil {
-		return *aircraft.AltitudeBaro.Feet > m.cfg.MaxAltitude
+		if *aircraft.AltitudeBaro.Feet > m.cfg.MaxAltitude {
+			return "above_max_barometric_altitude", []any{
+				"altitude_baro", *aircraft.AltitudeBaro.Feet,
+				"max_altitude", m.cfg.MaxAltitude,
+			}
+		}
+		return "", nil
 	}
 	if aircraft.AltitudeBaro.Ground {
-		return false
+		return "", nil
 	}
 	if aircraft.AltitudeGeom != nil {
-		return *aircraft.AltitudeGeom > m.cfg.MaxAltitude
+		if *aircraft.AltitudeGeom > m.cfg.MaxAltitude {
+			return "above_max_geometric_altitude", []any{
+				"altitude_geom", *aircraft.AltitudeGeom,
+				"max_altitude", m.cfg.MaxAltitude,
+			}
+		}
+		return "", nil
 	}
 
-	return true
+	return "missing_altitude", []any{
+		"max_altitude", m.cfg.MaxAltitude,
+	}
 }
 
 func (m *Monitor) postAircraft(ctx context.Context, aircraft tar1090.Aircraft) error {
