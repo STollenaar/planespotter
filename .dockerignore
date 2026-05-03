@@ -1,0 +1,13 @@
+.DS_Store
+.env
+.git
+.github
+.golangci.yaml
+.vscode
+Dockerfile
+README.md
+coverage.*
+*.coverprofile
+*.out
+*.test
+seen.json

@@ -1,0 +1,19 @@
+name: Build Docker image
+
+on:
+  push:
+    branches:
+      - main
+
+permissions: {}
+
+jobs:
+  build:
+    uses: nint8835/workflows/.github/workflows/docker-build.yaml@main
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
+      packages: write
+    with:
+      image_name: nint8835/planespotter
