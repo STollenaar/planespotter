@@ -8,11 +8,13 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	adsbdb "github.com/nint8835/go-adsbdb"
 
 	"github.com/nint8835/planespotter/pkg/config"
+	"github.com/nint8835/planespotter/pkg/messaging"
 	"github.com/nint8835/planespotter/pkg/tar1090"
 )
 
@@ -21,11 +23,17 @@ type Monitor struct {
 	cfg          config.Config
 	adsbdb       aircraftLookupClient
 	client       *tar1090.Client
+	messages     aircraftMessageSender
 	seenAircraft map[string]bool
 }
 
 type aircraftLookupClient interface {
 	Aircraft(ctx context.Context, identifier string) (adsbdb.Aircraft, error)
+	Callsign(ctx context.Context, callsign string) (adsbdb.FlightRoute, error)
+}
+
+type aircraftMessageSender interface {
+	SendAircraft(ctx context.Context, message messaging.AircraftMessage) error
 }
 
 // Option configures a Monitor.
@@ -34,6 +42,7 @@ type Option func(*Monitor) error
 // WithADSBDBClient configures the ADS-B DB client used to enrich aircraft data.
 func WithADSBDBClient(client interface {
 	Aircraft(ctx context.Context, identifier string) (adsbdb.Aircraft, error)
+	Callsign(ctx context.Context, callsign string) (adsbdb.FlightRoute, error)
 }) Option {
 	return func(m *Monitor) error {
 		if client == nil {
@@ -41,6 +50,20 @@ func WithADSBDBClient(client interface {
 		}
 
 		m.adsbdb = client
+		return nil
+	}
+}
+
+// WithMessageSender configures the sender used to post newly-seen aircraft.
+func WithMessageSender(sender interface {
+	SendAircraft(ctx context.Context, message messaging.AircraftMessage) error
+}) Option {
+	return func(m *Monitor) error {
+		if sender == nil {
+			return fmt.Errorf("message sender is nil")
+		}
+
+		m.messages = sender
 		return nil
 	}
 }
@@ -62,11 +85,22 @@ func New(cfg config.Config, opts ...Option) (*Monitor, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create adsbdb client: %w", err)
 	}
+	var messageSender aircraftMessageSender = messaging.NoopSender{}
+	if cfg.DiscordWebhookURL != "" {
+		messageSender, err = messaging.NewDiscordSender(
+			cfg.DiscordWebhookURL,
+			cfg.DiscordWebhookThreadID,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("create discord sender: %w", err)
+		}
+	}
 
 	monitor := &Monitor{
-		cfg:    cfg,
-		adsbdb: adsbdbClient,
-		client: client,
+		cfg:      cfg,
+		adsbdb:   adsbdbClient,
+		client:   client,
+		messages: messageSender,
 	}
 	for _, opt := range opts {
 		if opt == nil {
@@ -148,14 +182,14 @@ func (m *Monitor) FetchAndCheck(ctx context.Context) error {
 		}
 
 		m.seenAircraft[aircraft.Hex] = true
+		if err := m.saveSeenAircraft(); err != nil {
+			return fmt.Errorf("save seen aircraft: %w", err)
+		}
 		seenNewAircraft = true
 		newAircraftCount++
 	}
 
 	if seenNewAircraft {
-		if err := m.saveSeenAircraft(); err != nil {
-			return fmt.Errorf("save seen aircraft: %w", err)
-		}
 		slog.DebugContext(
 			ctx,
 			"Saved seen aircraft",
@@ -171,12 +205,49 @@ func (m *Monitor) FetchAndCheck(ctx context.Context) error {
 }
 
 func (m *Monitor) postAircraft(ctx context.Context, aircraft tar1090.Aircraft) error {
-	_, err := m.adsbdb.Aircraft(ctx, aircraft.Hex)
+	details, err := m.adsbdb.Aircraft(ctx, aircraft.Hex)
+	var detailsPtr *adsbdb.Aircraft
 	if err != nil {
 		slog.WarnContext(ctx, "Error looking up aircraft details", "hex", aircraft.Hex, "error", err)
+	} else {
+		detailsPtr = &details
+	}
+
+	route, err := m.flightRoute(ctx, aircraft)
+	if err != nil {
+		return err
+	}
+
+	if err := m.messages.SendAircraft(ctx, messaging.AircraftMessage{
+		Aircraft: aircraft,
+		Details:  detailsPtr,
+		Route:    route,
+	}); err != nil {
+		return fmt.Errorf("send aircraft message: %w", err)
 	}
 
 	return nil
+}
+
+func (m *Monitor) flightRoute(ctx context.Context, aircraft tar1090.Aircraft) (*adsbdb.FlightRoute, error) {
+	callsign := strings.TrimSpace(aircraft.Flight)
+	if callsign == "" {
+		return nil, nil
+	}
+
+	route, err := m.adsbdb.Callsign(ctx, callsign)
+	if err != nil {
+		slog.WarnContext(
+			ctx,
+			"Error looking up flight route",
+			"hex", aircraft.Hex,
+			"callsign", callsign,
+			"error", err,
+		)
+		return nil, nil
+	}
+
+	return &route, nil
 }
 
 func (m *Monitor) loadSeenAircraft() (map[string]bool, error) {

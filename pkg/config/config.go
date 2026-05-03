@@ -15,10 +15,12 @@ const envPrefix = "PLANESPOTTER"
 
 // Config contains planespotter configuration loaded from the environment.
 type Config struct {
-	LogLevel         slog.Level    `split_words:"true" default:"INFO"`
-	Tar1090URL       string        `split_words:"true" required:"true"`
-	MonitorInterval  time.Duration `split_words:"true" default:"15s"`
-	SeenAircraftPath string        `split_words:"true" default:"seen.json"`
+	LogLevel               slog.Level    `split_words:"true" default:"INFO"`
+	Tar1090URL             string        `split_words:"true" required:"true"`
+	MonitorInterval        time.Duration `split_words:"true" default:"15s"`
+	SeenAircraftPath       string        `split_words:"true" default:"seen.json"`
+	DiscordWebhookURL      string        `split_words:"true" required:"true"`
+	DiscordWebhookThreadID string        `split_words:"true"`
 }
 
 // Load loads .env, then populates Config from PLANESPOTTER_ environment variables.
