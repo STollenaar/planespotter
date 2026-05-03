@@ -154,6 +154,67 @@ func TestFetchAndCheckUsesGeometricAltitudeWhenBarometricAltitudeIsUnavailable(t
 	assertSeenFile(t, path, map[string]bool{"below": true, "ground": true})
 }
 
+func TestFetchAndCheckIgnoresAircraftWithoutAltitudeWhenMaxAltitudeIsEnabled(t *testing.T) {
+	server := aircraftServer(
+		t,
+		http.StatusOK,
+		`{"now":1,"messages":0,"aircraft":[{"hex":"abc123"}]}`,
+	)
+	defer server.Close()
+
+	path := filepath.Join(t.TempDir(), "seen.json")
+	sender := &recordingMessageSender{}
+	adsbdbClient := &recordingADSBDBClient{}
+	mon := newTestMonitorWithConfigAndOptions(
+		t,
+		config.Config{
+			Tar1090URL:       server.URL,
+			MonitorInterval:  time.Minute,
+			MaxAltitude:      10000,
+			SeenAircraftPath: path,
+		},
+		monitor.WithADSBDBClient(adsbdbClient),
+		monitor.WithMessageSender(sender),
+	)
+	if err := mon.FetchAndCheck(context.Background()); err != nil {
+		t.Fatalf("FetchAndCheck() error = %v", err)
+	}
+
+	assertFileDoesNotExist(t, path)
+	if len(adsbdbClient.identifiers) != 0 {
+		t.Fatalf("adsbdb Aircraft() identifiers = %#v, want none", adsbdbClient.identifiers)
+	}
+	if len(sender.messages) != 0 {
+		t.Fatalf("sent message count = %d, want 0", len(sender.messages))
+	}
+}
+
+func TestFetchAndCheckAllowsAircraftWithoutAltitudeWhenMaxAltitudeIsDisabled(t *testing.T) {
+	server := aircraftServer(
+		t,
+		http.StatusOK,
+		`{"now":1,"messages":0,"aircraft":[{"hex":"abc123"}]}`,
+	)
+	defer server.Close()
+
+	path := filepath.Join(t.TempDir(), "seen.json")
+	mon := newTestMonitorWithConfigAndOptions(
+		t,
+		config.Config{
+			Tar1090URL:       server.URL,
+			MonitorInterval:  time.Minute,
+			MaxAltitude:      0,
+			SeenAircraftPath: path,
+		},
+		monitor.WithADSBDBClient(&recordingADSBDBClient{}),
+	)
+	if err := mon.FetchAndCheck(context.Background()); err != nil {
+		t.Fatalf("FetchAndCheck() error = %v", err)
+	}
+
+	assertSeenFile(t, path, map[string]bool{"abc123": true})
+}
+
 func TestFetchAndCheckEnhancesNewAircraftWithHex(t *testing.T) {
 	server := aircraftServer(
 		t,

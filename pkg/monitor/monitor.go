@@ -165,11 +165,9 @@ func (m *Monitor) FetchAndCheck(ctx context.Context) error {
 	seenNewAircraft := false
 	newAircraftCount := 0
 	for _, aircraft := range response.Aircraft {
-		if aircraft.Hex == "" || m.aircraftAboveMaxAltitude(aircraft) || m.seenAircraft[aircraft.Hex] {
+		if aircraft.Hex == "" || m.aircraftOutsideMaxAltitude(aircraft) || m.seenAircraft[aircraft.Hex] {
 			continue
 		}
-
-		fmt.Printf("New aircraft: %#+v\n", aircraft)
 
 		slog.InfoContext(
 			ctx,
@@ -207,7 +205,7 @@ func (m *Monitor) FetchAndCheck(ctx context.Context) error {
 	return nil
 }
 
-func (m *Monitor) aircraftAboveMaxAltitude(aircraft tar1090.Aircraft) bool {
+func (m *Monitor) aircraftOutsideMaxAltitude(aircraft tar1090.Aircraft) bool {
 	if m.cfg.MaxAltitude <= 0 {
 		return false
 	}
@@ -222,7 +220,7 @@ func (m *Monitor) aircraftAboveMaxAltitude(aircraft tar1090.Aircraft) bool {
 		return *aircraft.AltitudeGeom > m.cfg.MaxAltitude
 	}
 
-	return false
+	return true
 }
 
 func (m *Monitor) postAircraft(ctx context.Context, aircraft tar1090.Aircraft) error {
