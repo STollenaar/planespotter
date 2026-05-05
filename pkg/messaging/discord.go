@@ -103,6 +103,15 @@ func buildPayload(message AircraftMessage) webhooks.MessagePayload {
 }
 
 func flightInfoURL(aircraft tar1090.Aircraft) string {
+	if aircraft.DBFlags&tar1090.DBFlagLADD != 0 {
+		identifier := strings.TrimSpace(aircraft.Hex)
+		if identifier == "" {
+			return ""
+		}
+
+		return "https://globe.adsbexchange.com/?icao=" + url.QueryEscape(identifier)
+	}
+
 	identifier := firstNonEmpty(aircraft.Flight, aircraft.Registration)
 	if identifier == "" {
 		return ""
