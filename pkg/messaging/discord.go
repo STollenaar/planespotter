@@ -19,6 +19,7 @@ type AircraftMessage struct {
 	Aircraft tar1090.Aircraft
 	Details  *adsbdb.Aircraft
 	Route    *adsbdb.FlightRoute
+	ImageURL string
 }
 
 // NoopSender discards aircraft messages.
@@ -90,8 +91,8 @@ func buildPayload(message AircraftMessage) webhooks.MessagePayload {
 		Fields: fields(aircraft, message.Details, message.Route),
 		Footer: footer(aircraft, message.Details),
 	}
-	if message.Details != nil && message.Details.URLPhoto != nil {
-		embed.Image = &webhooks.EmbedImage{URL: *message.Details.URLPhoto}
+	if imageURL := aircraftImageURL(message.Details, message.ImageURL); imageURL != "" {
+		embed.Image = &webhooks.EmbedImage{URL: imageURL}
 	}
 
 	return webhooks.MessagePayload{
@@ -100,6 +101,18 @@ func buildPayload(message AircraftMessage) webhooks.MessagePayload {
 			Parse: []webhooks.AllowedMentionsParse{},
 		},
 	}
+}
+
+func aircraftImageURL(details *adsbdb.Aircraft, fallback string) string {
+	if details == nil || details.URLPhoto == nil {
+		return strings.TrimSpace(fallback)
+	}
+
+	if photoURL := strings.TrimSpace(*details.URLPhoto); photoURL != "" {
+		return photoURL
+	}
+
+	return strings.TrimSpace(fallback)
 }
 
 func flightInfoURL(aircraft tar1090.Aircraft) string {

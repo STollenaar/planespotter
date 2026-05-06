@@ -15,15 +15,17 @@ import (
 
 	"github.com/nint8835/planespotter/pkg/config"
 	"github.com/nint8835/planespotter/pkg/messaging"
+	"github.com/nint8835/planespotter/pkg/planespotters"
 	"github.com/nint8835/planespotter/pkg/tar1090"
 )
 
-const adsbdbUserAgent = "planespotter (github.com/nint8835/planespotter)"
+const userAgent = "planespotter (github.com/nint8835/planespotter)"
 
 // Monitor periodically fetches tar1090 aircraft data and posts newly-seen aircraft.
 type Monitor struct {
 	cfg          config.Config
 	adsbdb       aircraftLookupClient
+	photos       aircraftPhotoClient
 	client       *tar1090.Client
 	messages     aircraftMessageSender
 	seenAircraft map[string]bool
@@ -44,6 +46,10 @@ type aircraftMessageSender interface {
 	SendAircraft(ctx context.Context, message messaging.AircraftMessage) error
 }
 
+type aircraftPhotoClient interface {
+	AircraftPhoto(ctx context.Context, aircraft planespotters.Aircraft) (string, error)
+}
+
 // Option configures a Monitor.
 type Option func(*Monitor) error
 
@@ -58,6 +64,20 @@ func WithADSBDBClient(client interface {
 		}
 
 		m.adsbdb = client
+		return nil
+	}
+}
+
+// WithAircraftPhotoClient configures the client used to find fallback aircraft photos.
+func WithAircraftPhotoClient(client interface {
+	AircraftPhoto(ctx context.Context, aircraft planespotters.Aircraft) (string, error)
+}) Option {
+	return func(m *Monitor) error {
+		if client == nil {
+			return fmt.Errorf("aircraft photo client is nil")
+		}
+
+		m.photos = client
 		return nil
 	}
 }
@@ -92,7 +112,7 @@ func New(cfg config.Config, opts ...Option) (*Monitor, error) {
 		return nil, fmt.Errorf("create tar1090 client: %w", err)
 	}
 	adsbdbClient, err := adsbdb.NewClient(
-		adsbdb.WithUserAgent(adsbdbUserAgent),
+		adsbdb.WithUserAgent(userAgent),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create adsbdb client: %w", err)
@@ -108,9 +128,17 @@ func New(cfg config.Config, opts ...Option) (*Monitor, error) {
 		}
 	}
 
+	photoClient, err := planespotters.NewClient(
+		planespotters.WithUserAgent(userAgent),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create planespotters client: %w", err)
+	}
+
 	monitor := &Monitor{
 		cfg:      cfg,
 		adsbdb:   adsbdbClient,
+		photos:   photoClient,
 		client:   client,
 		messages: messageSender,
 		pending:  map[string]pendingAircraft{},
@@ -383,15 +411,47 @@ func (m *Monitor) postAircraft(ctx context.Context, aircraft tar1090.Aircraft) e
 		return err
 	}
 
+	imageURL := m.fallbackAircraftPhoto(ctx, aircraft, detailsPtr)
+
 	if err := m.messages.SendAircraft(ctx, messaging.AircraftMessage{
 		Aircraft: aircraft,
 		Details:  detailsPtr,
 		Route:    route,
+		ImageURL: imageURL,
 	}); err != nil {
 		return fmt.Errorf("send aircraft message: %w", err)
 	}
 
 	return nil
+}
+
+func (m *Monitor) fallbackAircraftPhoto(
+	ctx context.Context,
+	aircraft tar1090.Aircraft,
+	details *adsbdb.Aircraft,
+) string {
+	if hasADSBDBPhoto(details) || m.photos == nil {
+		return ""
+	}
+
+	imageURL, err := m.photos.AircraftPhoto(ctx, planespotters.Aircraft{
+		Hex:          aircraft.Hex,
+		Registration: aircraft.Registration,
+		ICAOType:     aircraft.AircraftType,
+	})
+	if err != nil {
+		slog.WarnContext(ctx, "Error looking up fallback aircraft photo", "hex", aircraft.Hex, "error", err)
+		return ""
+	}
+
+	return strings.TrimSpace(imageURL)
+}
+
+func hasADSBDBPhoto(details *adsbdb.Aircraft) bool {
+	if details == nil {
+		return false
+	}
+	return details.URLPhoto != nil && strings.TrimSpace(*details.URLPhoto) != ""
 }
 
 func (m *Monitor) flightRoute(ctx context.Context, aircraft tar1090.Aircraft) (*adsbdb.FlightRoute, error) {

@@ -202,6 +202,103 @@ func TestDiscordSenderLinksLADDFlightInfoByHexWithoutFlight(t *testing.T) {
 	}
 }
 
+func TestDiscordSenderUsesADSBDBPhoto(t *testing.T) {
+	var gotPayload map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotPayload); err != nil {
+			t.Errorf("decode payload: %v", err)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	sender, err := messaging.NewDiscordSender(server.URL, "")
+	if err != nil {
+		t.Fatalf("NewDiscordSender() error = %v", err)
+	}
+
+	photoURL := "https://example.test/photo.jpg"
+	err = sender.SendAircraft(context.Background(), messaging.AircraftMessage{
+		Aircraft: tar1090.Aircraft{Hex: "c12345"},
+		Details:  &adsbdb.Aircraft{URLPhoto: &photoURL},
+		ImageURL: "https://example.test/fallback.jpg",
+	})
+	if err != nil {
+		t.Fatalf("SendAircraft() error = %v", err)
+	}
+
+	embeds := gotPayload["embeds"].([]any)
+	embed := embeds[0].(map[string]any)
+	image := embed["image"].(map[string]any)
+	if image["url"] != photoURL {
+		t.Fatalf("image url = %#v, want adsbdb photo", image["url"])
+	}
+}
+
+func TestDiscordSenderUsesFallbackImageInsteadOfADSBDBThumbnail(t *testing.T) {
+	var gotPayload map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotPayload); err != nil {
+			t.Errorf("decode payload: %v", err)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	sender, err := messaging.NewDiscordSender(server.URL, "")
+	if err != nil {
+		t.Fatalf("NewDiscordSender() error = %v", err)
+	}
+
+	thumbnailURL := "https://example.test/thumb.jpg"
+	err = sender.SendAircraft(context.Background(), messaging.AircraftMessage{
+		Aircraft: tar1090.Aircraft{Hex: "c12345"},
+		Details:  &adsbdb.Aircraft{URLPhotoThumbnail: &thumbnailURL},
+		ImageURL: "https://example.test/fallback-large.jpg",
+	})
+	if err != nil {
+		t.Fatalf("SendAircraft() error = %v", err)
+	}
+
+	embeds := gotPayload["embeds"].([]any)
+	embed := embeds[0].(map[string]any)
+	image := embed["image"].(map[string]any)
+	if image["url"] != "https://example.test/fallback-large.jpg" {
+		t.Fatalf("image url = %#v, want fallback large image", image["url"])
+	}
+}
+
+func TestDiscordSenderUsesFallbackImage(t *testing.T) {
+	var gotPayload map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotPayload); err != nil {
+			t.Errorf("decode payload: %v", err)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	sender, err := messaging.NewDiscordSender(server.URL, "")
+	if err != nil {
+		t.Fatalf("NewDiscordSender() error = %v", err)
+	}
+
+	err = sender.SendAircraft(context.Background(), messaging.AircraftMessage{
+		Aircraft: tar1090.Aircraft{Hex: "c12345"},
+		ImageURL: "https://example.test/fallback.jpg",
+	})
+	if err != nil {
+		t.Fatalf("SendAircraft() error = %v", err)
+	}
+
+	embeds := gotPayload["embeds"].([]any)
+	embed := embeds[0].(map[string]any)
+	image := embed["image"].(map[string]any)
+	if image["url"] != "https://example.test/fallback.jpg" {
+		t.Fatalf("image url = %#v, want fallback photo", image["url"])
+	}
+}
+
 func TestDiscordSenderOmitsTimestampForFooterWithoutCountry(t *testing.T) {
 	var gotPayload map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

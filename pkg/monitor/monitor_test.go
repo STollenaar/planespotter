@@ -19,6 +19,7 @@ import (
 	"github.com/nint8835/planespotter/pkg/config"
 	"github.com/nint8835/planespotter/pkg/messaging"
 	"github.com/nint8835/planespotter/pkg/monitor"
+	"github.com/nint8835/planespotter/pkg/planespotters"
 )
 
 func TestMain(m *testing.M) {
@@ -634,6 +635,143 @@ func TestFetchAndCheckSendsNewAircraftMessages(t *testing.T) {
 	}
 }
 
+func TestFetchAndCheckSendsMessageWithFallbackPhoto(t *testing.T) {
+	server := aircraftServer(
+		t,
+		http.StatusOK,
+		`{"now":1,"messages":0,"aircraft":[{"hex":"abc123","r":"C-GABC","t":"B738"}]}`,
+	)
+	defer server.Close()
+
+	path := filepath.Join(t.TempDir(), "seen.json")
+	sender := &recordingMessageSender{}
+	photos := &recordingAircraftPhotoClient{imageURL: "https://example.test/photo.jpg"}
+	mon := newTestMonitorWithOptions(
+		t,
+		server.URL,
+		path,
+		monitor.WithADSBDBClient(&recordingADSBDBClient{}),
+		monitor.WithAircraftPhotoClient(photos),
+		monitor.WithMessageSender(sender),
+	)
+	if err := mon.FetchAndCheck(context.Background()); err != nil {
+		t.Fatalf("FetchAndCheck() error = %v", err)
+	}
+
+	if len(photos.aircraft) != 1 {
+		t.Fatalf("photo lookup count = %d, want 1", len(photos.aircraft))
+	}
+	if photos.aircraft[0].Hex != "abc123" ||
+		photos.aircraft[0].Registration != "C-GABC" ||
+		photos.aircraft[0].ICAOType != "B738" {
+		t.Fatalf("photo lookup aircraft = %#v, want planespotters aircraft", photos.aircraft[0])
+	}
+	if len(sender.messages) != 1 {
+		t.Fatalf("sent message count = %d, want 1", len(sender.messages))
+	}
+	if sender.messages[0].ImageURL != "https://example.test/photo.jpg" {
+		t.Fatalf("sent image url = %q, want fallback photo", sender.messages[0].ImageURL)
+	}
+}
+
+func TestFetchAndCheckSkipsFallbackPhotoWhenADSBDBHasPhoto(t *testing.T) {
+	server := aircraftServer(
+		t,
+		http.StatusOK,
+		`{"now":1,"messages":0,"aircraft":[{"hex":"abc123"}]}`,
+	)
+	defer server.Close()
+
+	adsbdbPhoto := "https://example.test/adsbdb.jpg"
+	path := filepath.Join(t.TempDir(), "seen.json")
+	sender := &recordingMessageSender{}
+	photos := &recordingAircraftPhotoClient{imageURL: "https://example.test/fallback.jpg"}
+	mon := newTestMonitorWithOptions(
+		t,
+		server.URL,
+		path,
+		monitor.WithADSBDBClient(&recordingADSBDBClient{
+			aircraft: adsbdb.Aircraft{URLPhoto: &adsbdbPhoto},
+		}),
+		monitor.WithAircraftPhotoClient(photos),
+		monitor.WithMessageSender(sender),
+	)
+	if err := mon.FetchAndCheck(context.Background()); err != nil {
+		t.Fatalf("FetchAndCheck() error = %v", err)
+	}
+
+	if len(photos.aircraft) != 0 {
+		t.Fatalf("photo lookup count = %d, want 0", len(photos.aircraft))
+	}
+	if sender.messages[0].ImageURL != "" {
+		t.Fatalf("sent fallback image url = %q, want empty", sender.messages[0].ImageURL)
+	}
+}
+
+func TestFetchAndCheckUsesFallbackPhotoWhenADSBDBOnlyHasThumbnail(t *testing.T) {
+	server := aircraftServer(
+		t,
+		http.StatusOK,
+		`{"now":1,"messages":0,"aircraft":[{"hex":"abc123"}]}`,
+	)
+	defer server.Close()
+
+	adsbdbThumbnail := "https://example.test/thumb.jpg"
+	path := filepath.Join(t.TempDir(), "seen.json")
+	sender := &recordingMessageSender{}
+	photos := &recordingAircraftPhotoClient{imageURL: "https://example.test/fallback-large.jpg"}
+	mon := newTestMonitorWithOptions(
+		t,
+		server.URL,
+		path,
+		monitor.WithADSBDBClient(&recordingADSBDBClient{
+			aircraft: adsbdb.Aircraft{URLPhotoThumbnail: &adsbdbThumbnail},
+		}),
+		monitor.WithAircraftPhotoClient(photos),
+		monitor.WithMessageSender(sender),
+	)
+	if err := mon.FetchAndCheck(context.Background()); err != nil {
+		t.Fatalf("FetchAndCheck() error = %v", err)
+	}
+
+	if len(photos.aircraft) != 1 {
+		t.Fatalf("photo lookup count = %d, want 1", len(photos.aircraft))
+	}
+	if sender.messages[0].ImageURL != "https://example.test/fallback-large.jpg" {
+		t.Fatalf("sent fallback image url = %q, want fallback large image", sender.messages[0].ImageURL)
+	}
+}
+
+func TestFetchAndCheckSendsMessageWhenFallbackPhotoFails(t *testing.T) {
+	server := aircraftServer(
+		t,
+		http.StatusOK,
+		`{"now":1,"messages":0,"aircraft":[{"hex":"abc123"}]}`,
+	)
+	defer server.Close()
+
+	path := filepath.Join(t.TempDir(), "seen.json")
+	sender := &recordingMessageSender{}
+	mon := newTestMonitorWithOptions(
+		t,
+		server.URL,
+		path,
+		monitor.WithADSBDBClient(&recordingADSBDBClient{}),
+		monitor.WithAircraftPhotoClient(&recordingAircraftPhotoClient{err: errors.New("photo failed")}),
+		monitor.WithMessageSender(sender),
+	)
+	if err := mon.FetchAndCheck(context.Background()); err != nil {
+		t.Fatalf("FetchAndCheck() error = %v", err)
+	}
+
+	if len(sender.messages) != 1 {
+		t.Fatalf("sent message count = %d, want 1", len(sender.messages))
+	}
+	if sender.messages[0].ImageURL != "" {
+		t.Fatalf("sent image url = %q, want empty", sender.messages[0].ImageURL)
+	}
+}
+
 func TestFetchAndCheckPersistsAircraftWhenEnhancementFails(t *testing.T) {
 	server := aircraftServer(
 		t,
@@ -893,7 +1031,10 @@ func newTestMonitorWithConfigAndOptions(
 ) *monitor.Monitor {
 	t.Helper()
 
-	monitor, err := monitor.New(cfg, opts...)
+	defaultOpts := []monitor.Option{
+		monitor.WithAircraftPhotoClient(&recordingAircraftPhotoClient{}),
+	}
+	monitor, err := monitor.New(cfg, append(defaultOpts, opts...)...)
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -923,6 +1064,20 @@ func (c *recordingADSBDBClient) Aircraft(_ context.Context, identifier string) (
 func (c *recordingADSBDBClient) Callsign(_ context.Context, callsign string) (adsbdb.FlightRoute, error) {
 	c.callsigns = append(c.callsigns, callsign)
 	return c.route, c.routeErr
+}
+
+type recordingAircraftPhotoClient struct {
+	aircraft []planespotters.Aircraft
+	imageURL string
+	err      error
+}
+
+func (c *recordingAircraftPhotoClient) AircraftPhoto(
+	_ context.Context,
+	aircraft planespotters.Aircraft,
+) (string, error) {
+	c.aircraft = append(c.aircraft, aircraft)
+	return c.imageURL, c.err
 }
 
 type recordingMessageSender struct {
