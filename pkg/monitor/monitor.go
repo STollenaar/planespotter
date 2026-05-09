@@ -28,13 +28,14 @@ type Monitor struct {
 	photos       aircraftPhotoClient
 	client       *tar1090.Client
 	messages     aircraftMessageSender
-	seenAircraft map[string]bool
+	seenAircraft map[string]time.Time
 	pending      map[string]pendingAircraft
 }
 
 type pendingAircraft struct {
 	aircraft tar1090.Aircraft
 	receives int
+	lastSeen time.Time
 }
 
 type aircraftLookupClient interface {
@@ -203,8 +204,10 @@ func (m *Monitor) FetchAndCheck(ctx context.Context) error {
 	)
 
 	seenNewAircraft := false
+	seenAircraftChanged := false
 	newAircraftCount := 0
 	receivedAircraft := map[string]bool{}
+	lastSeen := time.Unix(int64(response.Now), 0)
 	for _, aircraft := range response.Aircraft {
 		if aircraft.Hex == "" {
 			m.logIgnoredAircraft(ctx, aircraft, "missing_hex")
@@ -215,8 +218,12 @@ func (m *Monitor) FetchAndCheck(ctx context.Context) error {
 			m.logIgnoredAircraft(ctx, aircraft, reason, attrs...)
 			continue
 		}
-		if m.seenAircraft[aircraft.Hex] {
+		if _, ok := m.seenAircraft[aircraft.Hex]; ok {
 			delete(m.pending, aircraft.Hex)
+			if !m.seenAircraft[aircraft.Hex].Equal(lastSeen) {
+				m.seenAircraft[aircraft.Hex] = lastSeen
+				seenAircraftChanged = true
+			}
 			m.logIgnoredAircraft(ctx, aircraft, "already_seen")
 			continue
 		}
@@ -224,7 +231,7 @@ func (m *Monitor) FetchAndCheck(ctx context.Context) error {
 			aircraft = mergePendingAircraft(pending.aircraft, aircraft)
 		}
 
-		if !m.shouldPostAircraft(ctx, aircraft) {
+		if !m.shouldPostAircraft(ctx, aircraft, lastSeen) {
 			continue
 		}
 
@@ -237,14 +244,14 @@ func (m *Monitor) FetchAndCheck(ctx context.Context) error {
 			"type", aircraft.AircraftType,
 		)
 
-		if err := m.postAndMarkSeen(ctx, aircraft); err != nil {
+		if err := m.postAndMarkSeen(ctx, aircraft, lastSeen); err != nil {
 			return err
 		}
 		seenNewAircraft = true
 		newAircraftCount++
 	}
 	for hex, pending := range m.pending {
-		if receivedAircraft[hex] || m.seenAircraft[hex] {
+		if _, seen := m.seenAircraft[hex]; receivedAircraft[hex] || seen {
 			continue
 		}
 
@@ -256,11 +263,17 @@ func (m *Monitor) FetchAndCheck(ctx context.Context) error {
 			"callsign_wait_receives", m.cfg.CallsignWaitReceives,
 		)
 
-		if err := m.postAndMarkSeen(ctx, pending.aircraft); err != nil {
+		if err := m.postAndMarkSeen(ctx, pending.aircraft, pending.lastSeen); err != nil {
 			return err
 		}
 		seenNewAircraft = true
 		newAircraftCount++
+	}
+
+	if seenAircraftChanged {
+		if err := m.saveSeenAircraft(); err != nil {
+			return fmt.Errorf("save seen aircraft: %w", err)
+		}
 	}
 
 	if seenNewAircraft {
@@ -278,12 +291,12 @@ func (m *Monitor) FetchAndCheck(ctx context.Context) error {
 	return nil
 }
 
-func (m *Monitor) postAndMarkSeen(ctx context.Context, aircraft tar1090.Aircraft) error {
+func (m *Monitor) postAndMarkSeen(ctx context.Context, aircraft tar1090.Aircraft, lastSeen time.Time) error {
 	if err := m.postAircraft(ctx, aircraft); err != nil {
 		return fmt.Errorf("post aircraft %s: %w", aircraft.Hex, err)
 	}
 
-	m.seenAircraft[aircraft.Hex] = true
+	m.seenAircraft[aircraft.Hex] = lastSeen
 	delete(m.pending, aircraft.Hex)
 	if err := m.saveSeenAircraft(); err != nil {
 		return fmt.Errorf("save seen aircraft: %w", err)
@@ -292,7 +305,7 @@ func (m *Monitor) postAndMarkSeen(ctx context.Context, aircraft tar1090.Aircraft
 	return nil
 }
 
-func (m *Monitor) shouldPostAircraft(ctx context.Context, aircraft tar1090.Aircraft) bool {
+func (m *Monitor) shouldPostAircraft(ctx context.Context, aircraft tar1090.Aircraft, lastSeen time.Time) bool {
 	if strings.TrimSpace(aircraft.Flight) != "" {
 		delete(m.pending, aircraft.Hex)
 		return true
@@ -305,6 +318,7 @@ func (m *Monitor) shouldPostAircraft(ctx context.Context, aircraft tar1090.Aircr
 	pending := m.pending[aircraft.Hex]
 	pending.aircraft = mergePendingAircraft(pending.aircraft, aircraft)
 	pending.receives++
+	pending.lastSeen = lastSeen
 	m.pending[aircraft.Hex] = pending
 
 	if pending.receives >= m.cfg.CallsignWaitReceives {
@@ -477,11 +491,11 @@ func (m *Monitor) flightRoute(ctx context.Context, aircraft tar1090.Aircraft) (*
 	return &route, nil
 }
 
-func (m *Monitor) loadSeenAircraft() (map[string]bool, error) {
+func (m *Monitor) loadSeenAircraft() (map[string]time.Time, error) {
 	file, err := os.Open(m.cfg.SeenAircraftPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return map[string]bool{}, nil
+			return map[string]time.Time{}, nil
 		}
 		return nil, fmt.Errorf("open seen aircraft file: %w", err)
 	}
@@ -489,15 +503,40 @@ func (m *Monitor) loadSeenAircraft() (map[string]bool, error) {
 		_ = file.Close()
 	}()
 
-	var seenAircraft map[string]bool
-	if err := json.NewDecoder(file).Decode(&seenAircraft); err != nil {
+	var rawSeenAircraft map[string]json.RawMessage
+	if err := json.NewDecoder(file).Decode(&rawSeenAircraft); err != nil {
 		return nil, fmt.Errorf("decode seen aircraft file: %w", err)
 	}
+	seenAircraft := map[string]time.Time{}
+	legacySeen := time.Now()
+	for hex, raw := range rawSeenAircraft {
+		var lastSeenUnixTime int64
+		if err := json.Unmarshal(raw, &lastSeenUnixTime); err == nil {
+			seenAircraft[hex] = time.Unix(lastSeenUnixTime, 0)
+			continue
+		}
+
+		var seen bool
+		if err := json.Unmarshal(raw, &seen); err != nil {
+			return nil, fmt.Errorf("decode seen aircraft file entry %q: %w", hex, err)
+		}
+		if seen {
+			seenAircraft[hex] = legacySeen
+		}
+	}
 	if seenAircraft == nil {
-		seenAircraft = map[string]bool{}
+		seenAircraft = map[string]time.Time{}
 	}
 
 	return seenAircraft, nil
+}
+
+func seenAircraftUnixTimes(seenAircraft map[string]time.Time) map[string]int64 {
+	unixTimes := make(map[string]int64, len(seenAircraft))
+	for hex, lastSeen := range seenAircraft {
+		unixTimes[hex] = lastSeen.Unix()
+	}
+	return unixTimes
 }
 
 func (m *Monitor) saveSeenAircraft() error {
@@ -515,7 +554,7 @@ func (m *Monitor) saveSeenAircraft() error {
 
 	encoder := json.NewEncoder(file)
 	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(m.seenAircraft); err != nil {
+	if err := encoder.Encode(seenAircraftUnixTimes(m.seenAircraft)); err != nil {
 		return fmt.Errorf("encode seen aircraft: %w", err)
 	}
 

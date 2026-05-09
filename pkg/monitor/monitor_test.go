@@ -49,14 +49,43 @@ func TestFetchAndCheckSkipsExistingSeenAircraft(t *testing.T) {
 	defer server.Close()
 
 	path := filepath.Join(t.TempDir(), "seen.json")
-	writeSeenFixture(t, path, map[string]bool{"abc123": true})
+	writeSeenFixture(t, path, map[string]int64{"abc123": 0})
 
 	mon := newTestMonitor(t, server.URL, path)
 	if err := mon.FetchAndCheck(context.Background()); err != nil {
 		t.Fatalf("FetchAndCheck() error = %v", err)
 	}
 
-	assertSeenFile(t, path, map[string]bool{"abc123": true})
+	assertSeenFile(t, path, map[string]int64{"abc123": 1})
+}
+
+func TestFetchAndCheckLoadsLegacyBooleanSeenAircraft(t *testing.T) {
+	server := aircraftServer(
+		t,
+		http.StatusOK,
+		`{"now":1,"messages":0,"aircraft":[{"hex":"def456"}]}`,
+	)
+	defer server.Close()
+
+	path := filepath.Join(t.TempDir(), "seen.json")
+	if err := os.WriteFile(path, []byte(`{"abc123":true,"def456":false}`), 0o644); err != nil {
+		t.Fatalf("write legacy seen fixture: %v", err)
+	}
+
+	beforeLoad := time.Now().Unix()
+	mon := newTestMonitor(t, server.URL, path)
+	afterLoad := time.Now().Unix()
+	if err := mon.FetchAndCheck(context.Background()); err != nil {
+		t.Fatalf("FetchAndCheck() error = %v", err)
+	}
+
+	got := readSeenFile(t, path)
+	if got["abc123"] < beforeLoad || got["abc123"] > afterLoad {
+		t.Fatalf("legacy seen aircraft timestamp = %d, want between %d and %d", got["abc123"], beforeLoad, afterLoad)
+	}
+	if got["def456"] != 1 {
+		t.Fatalf("newly seen aircraft timestamp = %d, want 1", got["def456"])
+	}
 }
 
 func TestFetchAndCheckPersistsNewAircraft(t *testing.T) {
@@ -73,7 +102,7 @@ func TestFetchAndCheckPersistsNewAircraft(t *testing.T) {
 		t.Fatalf("FetchAndCheck() error = %v", err)
 	}
 
-	assertSeenFile(t, path, map[string]bool{"abc123": true})
+	assertSeenFile(t, path, map[string]int64{"abc123": 1})
 }
 
 func TestFetchAndCheckPersistsMultipleNewAircraft(t *testing.T) {
@@ -90,7 +119,7 @@ func TestFetchAndCheckPersistsMultipleNewAircraft(t *testing.T) {
 		t.Fatalf("FetchAndCheck() error = %v", err)
 	}
 
-	assertSeenFile(t, path, map[string]bool{"abc123": true, "def456": true})
+	assertSeenFile(t, path, map[string]int64{"abc123": 1, "def456": 1})
 }
 
 func TestFetchAndCheckIgnoresAircraftAboveMaxBarometricAltitude(t *testing.T) {
@@ -123,7 +152,7 @@ func TestFetchAndCheckIgnoresAircraftAboveMaxBarometricAltitude(t *testing.T) {
 		t.Fatalf("FetchAndCheck() error = %v", err)
 	}
 
-	assertSeenFile(t, path, map[string]bool{"at": true, "below": true})
+	assertSeenFile(t, path, map[string]int64{"at": 1, "below": 1})
 	if !reflect.DeepEqual(adsbdbClient.identifiers, []string{"at", "below"}) {
 		t.Fatalf("adsbdb Aircraft() identifiers = %#v, want at and below", adsbdbClient.identifiers)
 	}
@@ -159,7 +188,7 @@ func TestFetchAndCheckUsesGeometricAltitudeWhenBarometricAltitudeIsUnavailable(t
 		t.Fatalf("FetchAndCheck() error = %v", err)
 	}
 
-	assertSeenFile(t, path, map[string]bool{"below": true, "ground": true})
+	assertSeenFile(t, path, map[string]int64{"below": 1, "ground": 1})
 }
 
 func TestFetchAndCheckIgnoresAircraftWithoutAltitudeWhenMaxAltitudeIsEnabled(t *testing.T) {
@@ -220,7 +249,7 @@ func TestFetchAndCheckAllowsAircraftWithoutAltitudeWhenMaxAltitudeIsDisabled(t *
 		t.Fatalf("FetchAndCheck() error = %v", err)
 	}
 
-	assertSeenFile(t, path, map[string]bool{"abc123": true})
+	assertSeenFile(t, path, map[string]int64{"abc123": 1})
 }
 
 func TestFetchAndCheckEnhancesNewAircraftWithHex(t *testing.T) {
@@ -421,7 +450,7 @@ func TestFetchAndCheckWaitsForCallsignBeforePosting(t *testing.T) {
 	if err := mon.FetchAndCheck(context.Background()); err != nil {
 		t.Fatalf("FetchAndCheck() second error = %v", err)
 	}
-	assertSeenFile(t, path, map[string]bool{"abc123": true})
+	assertSeenFile(t, path, map[string]int64{"abc123": 2})
 	if len(sender.messages) != 1 {
 		t.Fatalf("sent message count after second fetch = %d, want 1", len(sender.messages))
 	}
@@ -529,7 +558,7 @@ func TestFetchAndCheckPostsWithoutCallsignAfterWaitReceives(t *testing.T) {
 	if err := mon.FetchAndCheck(context.Background()); err != nil {
 		t.Fatalf("FetchAndCheck() second error = %v", err)
 	}
-	assertSeenFile(t, path, map[string]bool{"abc123": true})
+	assertSeenFile(t, path, map[string]int64{"abc123": 2})
 	if len(sender.messages) != 1 {
 		t.Fatalf("sent message count after second fetch = %d, want 1", len(sender.messages))
 	}
@@ -580,7 +609,7 @@ func TestFetchAndCheckPostsPendingAircraftWhenNoLongerReceived(t *testing.T) {
 	if err := mon.FetchAndCheck(context.Background()); err != nil {
 		t.Fatalf("FetchAndCheck() second error = %v", err)
 	}
-	assertSeenFile(t, path, map[string]bool{"abc123": true})
+	assertSeenFile(t, path, map[string]int64{"abc123": 1})
 	if len(sender.messages) != 1 {
 		t.Fatalf("sent message count after second fetch = %d, want 1", len(sender.messages))
 	}
@@ -788,7 +817,7 @@ func TestFetchAndCheckPersistsAircraftWhenEnhancementFails(t *testing.T) {
 		t.Fatalf("FetchAndCheck() error = %v", err)
 	}
 
-	assertSeenFile(t, path, map[string]bool{"abc123": true})
+	assertSeenFile(t, path, map[string]int64{"abc123": 1})
 }
 
 func TestFetchAndCheckSendsMessageWhenEnhancementFails(t *testing.T) {
@@ -895,7 +924,7 @@ func TestFetchAndCheckPersistsSuccessfulAircraftBeforeLaterSendError(t *testing.
 		t.Fatal("FetchAndCheck() error = nil, want error")
 	}
 
-	assertSeenFile(t, path, map[string]bool{"abc123": true})
+	assertSeenFile(t, path, map[string]int64{"abc123": 1})
 }
 
 func TestFetchAndCheckIgnoresEmptyHex(t *testing.T) {
@@ -966,7 +995,7 @@ func TestRunFetchesImmediately(t *testing.T) {
 
 	deadline := time.After(time.Second)
 	for {
-		if seenFileMatches(path, map[string]bool{"abc123": true}) {
+		if seenFileMatches(path, map[string]int64{"abc123": 1}) {
 			cancel()
 			break
 		}
@@ -1121,7 +1150,7 @@ func aircraftSequenceServer(t *testing.T, responses []aircraftResponse) *httptes
 	}))
 }
 
-func writeSeenFixture(t *testing.T, path string, seenAircraft map[string]bool) {
+func writeSeenFixture(t *testing.T, path string, seenAircraft map[string]int64) {
 	t.Helper()
 
 	data, err := json.Marshal(seenAircraft)
@@ -1133,7 +1162,22 @@ func writeSeenFixture(t *testing.T, path string, seenAircraft map[string]bool) {
 	}
 }
 
-func assertSeenFile(t *testing.T, path string, want map[string]bool) {
+func assertSeenFile(t *testing.T, path string, want map[string]int64) {
+	t.Helper()
+
+	got := readSeenFile(t, path)
+
+	if len(got) != len(want) {
+		t.Fatalf("seen file length = %d, want %d; got %#v", len(got), len(want), got)
+	}
+	for hex, wantLastSeen := range want {
+		if got[hex] != wantLastSeen {
+			t.Fatalf("seen file[%q] = %v, want %v; got %#v", hex, got[hex], wantLastSeen, got)
+		}
+	}
+}
+
+func readSeenFile(t *testing.T, path string) map[string]int64 {
 	t.Helper()
 
 	data, err := os.ReadFile(path)
@@ -1141,19 +1185,12 @@ func assertSeenFile(t *testing.T, path string, want map[string]bool) {
 		t.Fatalf("read seen file: %v", err)
 	}
 
-	var got map[string]bool
+	var got map[string]int64
 	if err := json.Unmarshal(data, &got); err != nil {
 		t.Fatalf("decode seen file: %v", err)
 	}
 
-	if len(got) != len(want) {
-		t.Fatalf("seen file length = %d, want %d; got %#v", len(got), len(want), got)
-	}
-	for hex, wantSeen := range want {
-		if got[hex] != wantSeen {
-			t.Fatalf("seen file[%q] = %v, want %v; got %#v", hex, got[hex], wantSeen, got)
-		}
-	}
+	return got
 }
 
 func assertFileDoesNotExist(t *testing.T, path string) {
@@ -1164,13 +1201,13 @@ func assertFileDoesNotExist(t *testing.T, path string) {
 	}
 }
 
-func seenFileMatches(path string, want map[string]bool) bool {
+func seenFileMatches(path string, want map[string]int64) bool {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return false
 	}
 
-	var got map[string]bool
+	var got map[string]int64
 	if err := json.Unmarshal(data, &got); err != nil {
 		return false
 	}
@@ -1178,8 +1215,8 @@ func seenFileMatches(path string, want map[string]bool) bool {
 	if len(got) != len(want) {
 		return false
 	}
-	for hex, wantSeen := range want {
-		if got[hex] != wantSeen {
+	for hex, wantLastSeen := range want {
+		if got[hex] != wantLastSeen {
 			return false
 		}
 	}
