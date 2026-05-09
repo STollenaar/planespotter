@@ -4,14 +4,21 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	adsbdb "github.com/nint8835/go-adsbdb"
 	webhooks "github.com/typical-developers/discord-webhooks-go/v2"
 
 	"github.com/nint8835/planespotter/pkg/tar1090"
+)
+
+const (
+	discordSendMaxAttempts = 3
+	discordSendRetryDelay  = 5 * time.Second
 )
 
 // AircraftMessage contains the aircraft data used to build a Discord message.
@@ -59,12 +66,38 @@ func (s *DiscordSender) SendAircraft(ctx context.Context, message AircraftMessag
 		params.Set("thread_id", s.threadID)
 	}
 
-	_, res, err := s.client.Execute(ctx, buildPayload(message), &params)
-	if res != nil && res.Body != nil {
-		defer func() {
+	payload := buildPayload(message)
+	for attempt := 1; ; attempt++ {
+		_, res, err := s.client.Execute(ctx, payload, &params)
+		if res != nil && res.Body != nil {
 			_ = res.Body.Close()
-		}()
+		}
+
+		if err == nil && (res == nil || (res.StatusCode >= http.StatusOK && res.StatusCode < http.StatusMultipleChoices)) {
+			return nil
+		}
+
+		wrappedErr := discordWebhookError(res, err)
+		if !shouldRetryDiscordWebhook(res, err) || attempt >= discordSendMaxAttempts {
+			return wrappedErr
+		}
+
+		delay := discordRetryDelay(res)
+		slog.WarnContext(
+			ctx,
+			"Retrying Discord webhook send",
+			"attempt", attempt,
+			"max_attempts", discordSendMaxAttempts,
+			"retry_delay", delay,
+			"error", wrappedErr,
+		)
+		if err := waitForDiscordRetry(ctx, delay); err != nil {
+			return err
+		}
 	}
+}
+
+func discordWebhookError(res *http.Response, err error) error {
 	if err != nil {
 		return fmt.Errorf("execute discord webhook: %w", err)
 	}
@@ -73,6 +106,68 @@ func (s *DiscordSender) SendAircraft(ctx context.Context, message AircraftMessag
 	}
 
 	return nil
+}
+
+func shouldRetryDiscordWebhook(res *http.Response, err error) bool {
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return false
+		}
+		return true
+	}
+	if res == nil {
+		return false
+	}
+
+	return res.StatusCode == http.StatusTooManyRequests || res.StatusCode >= http.StatusInternalServerError
+}
+
+func discordRetryDelay(res *http.Response) time.Duration {
+	if res == nil {
+		return discordSendRetryDelay
+	}
+	delay, ok := parseRetryAfter(res.Header.Get("Retry-After"), time.Now())
+	if ok {
+		return delay
+	}
+
+	return discordSendRetryDelay
+}
+
+func parseRetryAfter(value string, now time.Time) (time.Duration, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, false
+	}
+
+	if seconds, err := time.ParseDuration(value + "s"); err == nil {
+		if seconds < 0 {
+			return 0, true
+		}
+		return seconds, true
+	}
+
+	retryAt, err := http.ParseTime(value)
+	if err != nil {
+		return 0, false
+	}
+	if delay := retryAt.Sub(now); delay > 0 {
+		return delay, true
+	}
+
+	return 0, true
+}
+
+func waitForDiscordRetry(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("wait to retry discord webhook: %w", ctx.Err())
+	}
 }
 
 func buildPayload(message AircraftMessage) webhooks.MessagePayload {
