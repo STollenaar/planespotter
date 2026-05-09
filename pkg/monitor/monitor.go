@@ -524,10 +524,6 @@ func (m *Monitor) loadSeenAircraft() (map[string]time.Time, error) {
 			seenAircraft[hex] = legacySeen
 		}
 	}
-	if seenAircraft == nil {
-		seenAircraft = map[string]time.Time{}
-	}
-
 	return seenAircraft, nil
 }
 
