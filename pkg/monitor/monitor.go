@@ -13,6 +13,7 @@ import (
 
 	adsbdb "github.com/nint8835/go-adsbdb"
 
+	"github.com/nint8835/planespotter/pkg/ccar"
 	"github.com/nint8835/planespotter/pkg/config"
 	"github.com/nint8835/planespotter/pkg/messaging"
 	"github.com/nint8835/planespotter/pkg/planespotters"
@@ -25,6 +26,7 @@ const userAgent = "planespotter (github.com/nint8835/planespotter)"
 type Monitor struct {
 	cfg          config.Config
 	adsbdb       aircraftLookupClient
+	ccar         ccarLookupClient
 	photos       aircraftPhotoClient
 	client       *tar1090.Client
 	messages     aircraftMessageSender
@@ -41,6 +43,10 @@ type pendingAircraft struct {
 type aircraftLookupClient interface {
 	Aircraft(ctx context.Context, identifier string) (adsbdb.Aircraft, error)
 	Callsign(ctx context.Context, callsign string) (adsbdb.FlightRoute, error)
+}
+
+type ccarLookupClient interface {
+	Lookup(ctx context.Context, registration string, modeSHex string) (*ccar.Record, error)
 }
 
 type aircraftMessageSender interface {
@@ -83,6 +89,20 @@ func WithAircraftPhotoClient(client interface {
 	}
 }
 
+// WithCCARClient configures the Canadian Civil Aircraft Registry client used to enrich aircraft data.
+func WithCCARClient(client interface {
+	Lookup(ctx context.Context, registration string, modeSHex string) (*ccar.Record, error)
+}) Option {
+	return func(m *Monitor) error {
+		if client == nil {
+			return fmt.Errorf("ccar client is nil")
+		}
+
+		m.ccar = client
+		return nil
+	}
+}
+
 // WithMessageSender configures the sender used to post newly-seen aircraft.
 func WithMessageSender(sender interface {
 	SendAircraft(ctx context.Context, message messaging.AircraftMessage) error
@@ -99,13 +119,18 @@ func WithMessageSender(sender interface {
 
 // New creates a monitor from application configuration.
 func New(cfg config.Config, opts ...Option) (*Monitor, error) {
+	if strings.TrimSpace(cfg.DataPath) == "" {
+		cfg.DataPath = "."
+	}
+
 	slog.Debug(
 		"Creating monitor",
 		"tar1090_url", cfg.Tar1090URL,
 		"monitor_interval", cfg.MonitorInterval,
 		"max_altitude", cfg.MaxAltitude,
 		"callsign_wait_receives", cfg.CallsignWaitReceives,
-		"seen_aircraft_path", cfg.SeenAircraftPath,
+		"data_path", cfg.DataPath,
+		"ccar_enabled", cfg.CCAREnabled,
 	)
 
 	client, err := tar1090.NewClient(cfg.Tar1090URL)
@@ -136,9 +161,18 @@ func New(cfg config.Config, opts ...Option) (*Monitor, error) {
 		return nil, fmt.Errorf("create planespotters client: %w", err)
 	}
 
+	var ccarClient ccarLookupClient
+	if cfg.CCAREnabled {
+		ccarClient, err = ccar.NewClient(filepath.Join(cfg.DataPath, "ccarcsdb"))
+		if err != nil {
+			return nil, fmt.Errorf("create ccar client: %w", err)
+		}
+	}
+
 	monitor := &Monitor{
 		cfg:      cfg,
 		adsbdb:   adsbdbClient,
+		ccar:     ccarClient,
 		photos:   photoClient,
 		client:   client,
 		messages: messageSender,
@@ -282,7 +316,7 @@ func (m *Monitor) FetchAndCheck(ctx context.Context) error {
 			"Saved seen aircraft",
 			"new_aircraft_count", newAircraftCount,
 			"seen_aircraft_count", len(m.seenAircraft),
-			"path", m.cfg.SeenAircraftPath,
+			"path", m.seenAircraftPath(),
 		)
 	} else {
 		slog.DebugContext(ctx, "No new aircraft found", "seen_aircraft_count", len(m.seenAircraft))
@@ -420,6 +454,8 @@ func (m *Monitor) postAircraft(ctx context.Context, aircraft tar1090.Aircraft) e
 		detailsPtr = &details
 	}
 
+	ccarRecord := m.ccarAircraft(ctx, aircraft, detailsPtr)
+
 	route, err := m.flightRoute(ctx, aircraft)
 	if err != nil {
 		return err
@@ -430,6 +466,7 @@ func (m *Monitor) postAircraft(ctx context.Context, aircraft tar1090.Aircraft) e
 	if err := m.messages.SendAircraft(ctx, messaging.AircraftMessage{
 		Aircraft: aircraft,
 		Details:  detailsPtr,
+		CCAR:     ccarRecord,
 		Route:    route,
 		ImageURL: imageURL,
 	}); err != nil {
@@ -437,6 +474,33 @@ func (m *Monitor) postAircraft(ctx context.Context, aircraft tar1090.Aircraft) e
 	}
 
 	return nil
+}
+
+func (m *Monitor) ccarAircraft(
+	ctx context.Context,
+	aircraft tar1090.Aircraft,
+	details *adsbdb.Aircraft,
+) *ccar.Record {
+	if m.ccar == nil {
+		return nil
+	}
+
+	registration := aircraft.Registration
+	if strings.TrimSpace(registration) == "" && details != nil {
+		registration = details.Registration
+	}
+	record, err := m.ccar.Lookup(ctx, registration, aircraft.Hex)
+	if err != nil {
+		slog.WarnContext(
+			ctx,
+			"Error looking up CCAR aircraft details",
+			"hex", aircraft.Hex,
+			"registration", registration,
+			"error", err,
+		)
+		return nil
+	}
+	return record
 }
 
 func (m *Monitor) fallbackAircraftPhoto(
@@ -492,7 +556,7 @@ func (m *Monitor) flightRoute(ctx context.Context, aircraft tar1090.Aircraft) (*
 }
 
 func (m *Monitor) loadSeenAircraft() (map[string]time.Time, error) {
-	file, err := os.Open(m.cfg.SeenAircraftPath)
+	file, err := os.Open(m.seenAircraftPath())
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return map[string]time.Time{}, nil
@@ -536,11 +600,11 @@ func seenAircraftUnixTimes(seenAircraft map[string]time.Time) map[string]int64 {
 }
 
 func (m *Monitor) saveSeenAircraft() error {
-	if err := os.MkdirAll(filepath.Dir(m.cfg.SeenAircraftPath), 0o755); err != nil {
+	if err := os.MkdirAll(m.cfg.DataPath, 0o755); err != nil {
 		return fmt.Errorf("create seen aircraft directory: %w", err)
 	}
 
-	file, err := os.Create(m.cfg.SeenAircraftPath)
+	file, err := os.Create(m.seenAircraftPath())
 	if err != nil {
 		return fmt.Errorf("create seen aircraft file: %w", err)
 	}
@@ -555,4 +619,8 @@ func (m *Monitor) saveSeenAircraft() error {
 	}
 
 	return nil
+}
+
+func (m *Monitor) seenAircraftPath() string {
+	return filepath.Join(m.cfg.DataPath, "seen.json")
 }

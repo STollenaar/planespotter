@@ -140,10 +140,10 @@ func TestFetchAndCheckIgnoresAircraftAboveMaxBarometricAltitude(t *testing.T) {
 	mon := newTestMonitorWithConfigAndOptions(
 		t,
 		config.Config{
-			Tar1090URL:       server.URL,
-			MonitorInterval:  time.Minute,
-			MaxAltitude:      10000,
-			SeenAircraftPath: path,
+			Tar1090URL:      server.URL,
+			MonitorInterval: time.Minute,
+			MaxAltitude:     10000,
+			DataPath:        filepath.Dir(path),
 		},
 		monitor.WithADSBDBClient(adsbdbClient),
 		monitor.WithMessageSender(sender),
@@ -177,10 +177,10 @@ func TestFetchAndCheckUsesGeometricAltitudeWhenBarometricAltitudeIsUnavailable(t
 	mon := newTestMonitorWithConfigAndOptions(
 		t,
 		config.Config{
-			Tar1090URL:       server.URL,
-			MonitorInterval:  time.Minute,
-			MaxAltitude:      10000,
-			SeenAircraftPath: path,
+			Tar1090URL:      server.URL,
+			MonitorInterval: time.Minute,
+			MaxAltitude:     10000,
+			DataPath:        filepath.Dir(path),
 		},
 		monitor.WithADSBDBClient(&recordingADSBDBClient{}),
 	)
@@ -205,10 +205,10 @@ func TestFetchAndCheckIgnoresAircraftWithoutAltitudeWhenMaxAltitudeIsEnabled(t *
 	mon := newTestMonitorWithConfigAndOptions(
 		t,
 		config.Config{
-			Tar1090URL:       server.URL,
-			MonitorInterval:  time.Minute,
-			MaxAltitude:      10000,
-			SeenAircraftPath: path,
+			Tar1090URL:      server.URL,
+			MonitorInterval: time.Minute,
+			MaxAltitude:     10000,
+			DataPath:        filepath.Dir(path),
 		},
 		monitor.WithADSBDBClient(adsbdbClient),
 		monitor.WithMessageSender(sender),
@@ -238,10 +238,10 @@ func TestFetchAndCheckAllowsAircraftWithoutAltitudeWhenMaxAltitudeIsDisabled(t *
 	mon := newTestMonitorWithConfigAndOptions(
 		t,
 		config.Config{
-			Tar1090URL:       server.URL,
-			MonitorInterval:  time.Minute,
-			MaxAltitude:      0,
-			SeenAircraftPath: path,
+			Tar1090URL:      server.URL,
+			MonitorInterval: time.Minute,
+			MaxAltitude:     0,
+			DataPath:        filepath.Dir(path),
 		},
 		monitor.WithADSBDBClient(&recordingADSBDBClient{}),
 	)
@@ -429,7 +429,7 @@ func TestFetchAndCheckWaitsForCallsignBeforePosting(t *testing.T) {
 		config.Config{
 			Tar1090URL:           server.URL,
 			MonitorInterval:      time.Minute,
-			SeenAircraftPath:     path,
+			DataPath:             filepath.Dir(path),
 			CallsignWaitReceives: 3,
 		},
 		monitor.WithADSBDBClient(adsbdbClient),
@@ -487,7 +487,7 @@ func TestFetchAndCheckPreservesPendingAircraftIdentityWhenCallsignArrives(t *tes
 		config.Config{
 			Tar1090URL:           server.URL,
 			MonitorInterval:      time.Minute,
-			SeenAircraftPath:     path,
+			DataPath:             filepath.Dir(path),
 			CallsignWaitReceives: 3,
 		},
 		monitor.WithADSBDBClient(&recordingADSBDBClient{}),
@@ -540,7 +540,7 @@ func TestFetchAndCheckPostsWithoutCallsignAfterWaitReceives(t *testing.T) {
 		config.Config{
 			Tar1090URL:           server.URL,
 			MonitorInterval:      time.Minute,
-			SeenAircraftPath:     path,
+			DataPath:             filepath.Dir(path),
 			CallsignWaitReceives: 2,
 		},
 		monitor.WithADSBDBClient(adsbdbClient),
@@ -591,7 +591,7 @@ func TestFetchAndCheckPostsPendingAircraftWhenNoLongerReceived(t *testing.T) {
 		config.Config{
 			Tar1090URL:           server.URL,
 			MonitorInterval:      time.Minute,
-			SeenAircraftPath:     path,
+			DataPath:             filepath.Dir(path),
 			CallsignWaitReceives: 3,
 		},
 		monitor.WithADSBDBClient(adsbdbClient),
@@ -965,9 +965,9 @@ func TestNewReturnsErrorForInvalidSeenJSON(t *testing.T) {
 	}
 
 	_, err := monitor.New(config.Config{
-		Tar1090URL:       server.URL,
-		MonitorInterval:  time.Minute,
-		SeenAircraftPath: path,
+		Tar1090URL:      server.URL,
+		MonitorInterval: time.Minute,
+		DataPath:        filepath.Dir(path),
 	})
 	if err == nil {
 		t.Fatal("New() error = nil, want error")
@@ -1049,7 +1049,7 @@ func newTestMonitorWithOptions(
 		Tar1090URL:           tar1090URL,
 		MonitorInterval:      time.Minute,
 		CallsignWaitReceives: 0,
-		SeenAircraftPath:     path,
+		DataPath:             filepath.Dir(path),
 	}, opts...)
 }
 

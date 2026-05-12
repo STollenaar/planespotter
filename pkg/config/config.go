@@ -20,7 +20,8 @@ type Config struct {
 	MonitorInterval        time.Duration `split_words:"true" default:"15s"`
 	MaxAltitude            int           `split_words:"true" default:"10000"`
 	CallsignWaitReceives   int           `split_words:"true" default:"4"`
-	SeenAircraftPath       string        `split_words:"true" default:"seen.json"`
+	DataPath               string        `split_words:"true" default:"."`
+	CCAREnabled            bool          `split_words:"true" default:"true"`
 	DiscordWebhookURL      string        `split_words:"true" required:"true"`
 	DiscordWebhookThreadID string        `split_words:"true"`
 }

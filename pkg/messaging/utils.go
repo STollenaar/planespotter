@@ -6,6 +6,7 @@ import (
 
 	adsbdb "github.com/nint8835/go-adsbdb"
 
+	"github.com/nint8835/planespotter/pkg/ccar"
 	"github.com/nint8835/planespotter/pkg/tar1090"
 )
 
@@ -60,6 +61,13 @@ func detailOwner(details *adsbdb.Aircraft) string {
 		return ""
 	}
 	return details.RegisteredOwner
+}
+
+func ccarOwner(record *ccar.Record) string {
+	if record == nil {
+		return ""
+	}
+	return record.OwnerName()
 }
 
 func detailCountry(details *adsbdb.Aircraft) string {

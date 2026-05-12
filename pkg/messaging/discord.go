@@ -13,6 +13,7 @@ import (
 	adsbdb "github.com/nint8835/go-adsbdb"
 	webhooks "github.com/typical-developers/discord-webhooks-go/v2"
 
+	"github.com/nint8835/planespotter/pkg/ccar"
 	"github.com/nint8835/planespotter/pkg/tar1090"
 )
 
@@ -25,6 +26,7 @@ const (
 type AircraftMessage struct {
 	Aircraft tar1090.Aircraft
 	Details  *adsbdb.Aircraft
+	CCAR     *ccar.Record
 	Route    *adsbdb.FlightRoute
 	ImageURL string
 }
@@ -183,7 +185,7 @@ func buildPayload(message AircraftMessage) webhooks.MessagePayload {
 		Title:  title,
 		URL:    flightInfoURL(aircraft),
 		Color:  embedColor(aircraft),
-		Fields: fields(aircraft, message.Details, message.Route),
+		Fields: fields(aircraft, message.Details, message.CCAR, message.Route),
 		Footer: footer(aircraft, message.Details),
 	}
 	if imageURL := aircraftImageURL(message.Details, message.ImageURL); imageURL != "" {
@@ -231,6 +233,7 @@ func flightInfoURL(aircraft tar1090.Aircraft) string {
 func fields(
 	aircraft tar1090.Aircraft,
 	details *adsbdb.Aircraft,
+	ccarRecord *ccar.Record,
 	route *adsbdb.FlightRoute,
 ) []webhooks.EmbedField {
 	var fields []webhooks.EmbedField
@@ -241,7 +244,7 @@ func fields(
 	}
 
 	addField("Aircraft", identityLine(aircraft, details))
-	addField("Operator", firstNonEmpty(airline(route), detailOwner(details), aircraft.OwnOp))
+	addField("Operator", firstNonEmpty(airline(route), ccarOwner(ccarRecord), detailOwner(details), aircraft.OwnOp))
 	addField("Route", routeDescription(route))
 	if len(fields) == 0 {
 		addField("Aircraft", "A previously unseen aircraft was picked up by tar1090.")
