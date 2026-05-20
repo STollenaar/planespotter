@@ -262,13 +262,12 @@ func TestDiscordSenderUsesFallbackImageInsteadOfADSBDBThumbnail(t *testing.T) {
 
 	embeds := gotPayload["embeds"].([]any)
 	embed := embeds[0].(map[string]any)
-	image := embed["image"].(map[string]any)
-	if image["url"] != "https://example.test/fallback-large.jpg" {
-		t.Fatalf("image url = %#v, want fallback large image", image["url"])
+	if _, ok := embed["image"]; ok {
+		t.Fatalf("image = %#v, want omitted for fallback image", embed["image"])
 	}
 }
 
-func TestDiscordSenderUsesFallbackImage(t *testing.T) {
+func TestDiscordSenderLinksFallbackImage(t *testing.T) {
 	var gotPayload map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := json.NewDecoder(r.Body).Decode(&gotPayload); err != nil {
@@ -295,15 +294,14 @@ func TestDiscordSenderUsesFallbackImage(t *testing.T) {
 
 	embeds := gotPayload["embeds"].([]any)
 	embed := embeds[0].(map[string]any)
-	image := embed["image"].(map[string]any)
-	if image["url"] != "https://example.test/fallback.jpg" {
-		t.Fatalf("image url = %#v, want fallback photo", image["url"])
+	if _, ok := embed["image"]; ok {
+		t.Fatalf("image = %#v, want omitted for fallback image", embed["image"])
 	}
 	fields := embed["fields"].([]any)
 	assertEmbedField(
 		t,
 		fields,
-		"Image copyright",
+		"Planespotters.net image",
 		"[Copyright © Example Photographer](https://www.planespotters.net/photo/123/example)",
 	)
 }

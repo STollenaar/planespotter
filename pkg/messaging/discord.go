@@ -191,9 +191,10 @@ func buildPayload(message AircraftMessage) webhooks.MessagePayload {
 		Footer: footer(aircraft, message.Details),
 	}
 	if imageURL := aircraftImageURL(message.Details, message.ImageURL); imageURL != "" {
-		embed.Image = &webhooks.EmbedImage{URL: imageURL}
 		if imageURL == strings.TrimSpace(message.ImageURL) {
-			addImageCopyrightField(&embed, message.ImageCopyright, message.ImageCopyrightURL)
+			addPlanespottersImageField(&embed, message.ImageCopyright, message.ImageCopyrightURL)
+		} else {
+			embed.Image = &webhooks.EmbedImage{URL: imageURL}
 		}
 	}
 
@@ -205,7 +206,7 @@ func buildPayload(message AircraftMessage) webhooks.MessagePayload {
 	}
 }
 
-func addImageCopyrightField(embed *webhooks.Embed, copyright string, copyrightURL string) {
+func addPlanespottersImageField(embed *webhooks.Embed, copyright string, copyrightURL string) {
 	copyright = strings.TrimSpace(copyright)
 	if copyright == "" {
 		return
@@ -217,7 +218,7 @@ func addImageCopyrightField(embed *webhooks.Embed, copyright string, copyrightUR
 	}
 
 	embed.Fields = append(embed.Fields, webhooks.EmbedField{
-		Name:  "Image copyright",
+		Name:  "Planespotters.net image",
 		Value: copyright,
 	})
 }
