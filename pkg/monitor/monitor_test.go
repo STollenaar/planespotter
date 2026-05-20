@@ -674,7 +674,11 @@ func TestFetchAndCheckSendsMessageWithFallbackPhoto(t *testing.T) {
 
 	path := filepath.Join(t.TempDir(), "seen.json")
 	sender := &recordingMessageSender{}
-	photos := &recordingAircraftPhotoClient{imageURL: "https://example.test/photo.jpg"}
+	photos := &recordingAircraftPhotoClient{photo: planespotters.Photo{
+		URL:       "https://example.test/photo.jpg",
+		Copyright: "Copyright © Example Photographer",
+		Link:      "https://www.planespotters.net/photo/123/example",
+	}}
 	mon := newTestMonitorWithOptions(
 		t,
 		server.URL,
@@ -701,6 +705,12 @@ func TestFetchAndCheckSendsMessageWithFallbackPhoto(t *testing.T) {
 	if sender.messages[0].ImageURL != "https://example.test/photo.jpg" {
 		t.Fatalf("sent image url = %q, want fallback photo", sender.messages[0].ImageURL)
 	}
+	if sender.messages[0].ImageCopyright != "Copyright © Example Photographer" {
+		t.Fatalf("sent image copyright = %q, want photographer copyright", sender.messages[0].ImageCopyright)
+	}
+	if sender.messages[0].ImageCopyrightURL != "https://www.planespotters.net/photo/123/example" {
+		t.Fatalf("sent image copyright url = %q, want Planespotters photo link", sender.messages[0].ImageCopyrightURL)
+	}
 }
 
 func TestFetchAndCheckSkipsFallbackPhotoWhenADSBDBHasPhoto(t *testing.T) {
@@ -714,7 +724,7 @@ func TestFetchAndCheckSkipsFallbackPhotoWhenADSBDBHasPhoto(t *testing.T) {
 	adsbdbPhoto := "https://example.test/adsbdb.jpg"
 	path := filepath.Join(t.TempDir(), "seen.json")
 	sender := &recordingMessageSender{}
-	photos := &recordingAircraftPhotoClient{imageURL: "https://example.test/fallback.jpg"}
+	photos := &recordingAircraftPhotoClient{photo: planespotters.Photo{URL: "https://example.test/fallback.jpg"}}
 	mon := newTestMonitorWithOptions(
 		t,
 		server.URL,
@@ -748,7 +758,7 @@ func TestFetchAndCheckUsesFallbackPhotoWhenADSBDBOnlyHasThumbnail(t *testing.T) 
 	adsbdbThumbnail := "https://example.test/thumb.jpg"
 	path := filepath.Join(t.TempDir(), "seen.json")
 	sender := &recordingMessageSender{}
-	photos := &recordingAircraftPhotoClient{imageURL: "https://example.test/fallback-large.jpg"}
+	photos := &recordingAircraftPhotoClient{photo: planespotters.Photo{URL: "https://example.test/fallback-large.jpg"}}
 	mon := newTestMonitorWithOptions(
 		t,
 		server.URL,
@@ -1097,16 +1107,16 @@ func (c *recordingADSBDBClient) Callsign(_ context.Context, callsign string) (ad
 
 type recordingAircraftPhotoClient struct {
 	aircraft []planespotters.Aircraft
-	imageURL string
+	photo    planespotters.Photo
 	err      error
 }
 
 func (c *recordingAircraftPhotoClient) AircraftPhoto(
 	_ context.Context,
 	aircraft planespotters.Aircraft,
-) (string, error) {
+) (planespotters.Photo, error) {
 	c.aircraft = append(c.aircraft, aircraft)
-	return c.imageURL, c.err
+	return c.photo, c.err
 }
 
 type recordingMessageSender struct {

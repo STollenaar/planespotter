@@ -24,7 +24,9 @@ func TestClientReturnsFirstLargeThumbnail(t *testing.T) {
 		_, _ = w.Write([]byte(`{
 			"photos": [{
 				"thumbnail": {"src": "https://example.test/thumb.jpg"},
-				"thumbnail_large": {"src": "https://example.test/large.jpg"}
+				"thumbnail_large": {"src": "https://example.test/large.jpg"},
+				"photographer": "Example Photographer",
+				"link": "https://www.planespotters.net/photo/123/example"
 			}]
 		}`))
 	}))
@@ -32,7 +34,7 @@ func TestClientReturnsFirstLargeThumbnail(t *testing.T) {
 
 	client := newTestClient(t, server)
 
-	imageURL, err := client.AircraftPhoto(context.Background(), planespotters.Aircraft{
+	photo, err := client.AircraftPhoto(context.Background(), planespotters.Aircraft{
 		Hex:          "abc123",
 		Registration: "C-GABC",
 		ICAOType:     "B738",
@@ -41,8 +43,14 @@ func TestClientReturnsFirstLargeThumbnail(t *testing.T) {
 		t.Fatalf("AircraftPhoto() error = %v", err)
 	}
 
-	if imageURL != "https://example.test/large.jpg" {
-		t.Fatalf("image url = %q, want large thumbnail", imageURL)
+	if photo.URL != "https://example.test/large.jpg" {
+		t.Fatalf("photo url = %q, want large thumbnail", photo.URL)
+	}
+	if photo.Copyright != "Copyright © Example Photographer" {
+		t.Fatalf("photo copyright = %q, want photographer copyright", photo.Copyright)
+	}
+	if photo.Link != "https://www.planespotters.net/photo/123/example" {
+		t.Fatalf("photo link = %q, want Planespotters photo link", photo.Link)
 	}
 	if gotPath != "/pub/photos/hex/ABC123" {
 		t.Fatalf("path = %q, want /pub/photos/hex/ABC123", gotPath)
@@ -92,13 +100,13 @@ func TestClientSupportsImagesResponse(t *testing.T) {
 
 	client := newTestClient(t, server)
 
-	imageURL, err := client.AircraftPhoto(context.Background(), planespotters.Aircraft{Hex: "abc123"})
+	photo, err := client.AircraftPhoto(context.Background(), planespotters.Aircraft{Hex: "abc123"})
 	if err != nil {
 		t.Fatalf("AircraftPhoto() error = %v", err)
 	}
 
-	if imageURL != "https://example.test/image-large.jpg" {
-		t.Fatalf("image url = %q, want image large thumbnail", imageURL)
+	if photo.URL != "https://example.test/image-large.jpg" {
+		t.Fatalf("photo url = %q, want image large thumbnail", photo.URL)
 	}
 }
 

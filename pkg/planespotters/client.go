@@ -19,6 +19,13 @@ type Aircraft struct {
 	ICAOType     string
 }
 
+// Photo contains a Planespotters.net aircraft photo and its attribution metadata.
+type Photo struct {
+	URL       string
+	Copyright string
+	Link      string
+}
+
 // Client fetches aircraft photos from the Planespotters.net public API.
 type Client struct {
 	baseURL    *url.URL
@@ -97,22 +104,24 @@ type photoResponse struct {
 }
 
 type photo struct {
-	LargeThumbnail image `json:"thumbnail_large"`
+	LargeThumbnail image  `json:"thumbnail_large"`
+	Photographer   string `json:"photographer"`
+	Link           string `json:"link"`
 }
 
 type image struct {
 	Src string `json:"src"`
 }
 
-// AircraftPhoto returns the first large thumbnail URL for an aircraft.
-func (c *Client) AircraftPhoto(ctx context.Context, aircraft Aircraft) (string, error) {
+// AircraftPhoto returns the first large thumbnail photo for an aircraft.
+func (c *Client) AircraftPhoto(ctx context.Context, aircraft Aircraft) (Photo, error) {
 	if c == nil {
-		return "", fmt.Errorf("planespotters client is nil")
+		return Photo{}, fmt.Errorf("planespotters client is nil")
 	}
 
 	hex := strings.ToUpper(strings.TrimSpace(aircraft.Hex))
 	if hex == "" {
-		return "", nil
+		return Photo{}, nil
 	}
 
 	photoPath := strings.TrimRight(c.baseURL.Path, "/") + "/hex/" + url.PathEscape(hex)
@@ -128,7 +137,7 @@ func (c *Client) AircraftPhoto(ctx context.Context, aircraft Aircraft) (string, 
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, photoURL.String(), nil)
 	if err != nil {
-		return "", fmt.Errorf("create planespotters photo request: %w", err)
+		return Photo{}, fmt.Errorf("create planespotters photo request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
 	if c.userAgent != "" {
@@ -137,7 +146,7 @@ func (c *Client) AircraftPhoto(ctx context.Context, aircraft Aircraft) (string, 
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("fetch planespotters photo: %w", err)
+		return Photo{}, fmt.Errorf("fetch planespotters photo: %w", err)
 	}
 	defer func() {
 		_ = resp.Body.Close()
@@ -145,7 +154,7 @@ func (c *Client) AircraftPhoto(ctx context.Context, aircraft Aircraft) (string, 
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return "", fmt.Errorf(
+		return Photo{}, fmt.Errorf(
 			"fetch planespotters photo: unexpected status %s: %s",
 			resp.Status,
 			strings.TrimSpace(string(body)),
@@ -154,14 +163,27 @@ func (c *Client) AircraftPhoto(ctx context.Context, aircraft Aircraft) (string, 
 
 	var photoResponse photoResponse
 	if err := json.NewDecoder(resp.Body).Decode(&photoResponse); err != nil {
-		return "", fmt.Errorf("decode planespotters photo response: %w", err)
+		return Photo{}, fmt.Errorf("decode planespotters photo response: %w", err)
 	}
 
 	for _, photo := range append(photoResponse.Photos, photoResponse.Images...) {
 		if thumbnail := strings.TrimSpace(photo.LargeThumbnail.Src); thumbnail != "" {
-			return thumbnail, nil
+			return Photo{
+				URL:       thumbnail,
+				Copyright: copyright(photo.Photographer),
+				Link:      strings.TrimSpace(photo.Link),
+			}, nil
 		}
 	}
 
-	return "", nil
+	return Photo{}, nil
+}
+
+func copyright(photographer string) string {
+	photographer = strings.TrimSpace(photographer)
+	if photographer == "" {
+		return ""
+	}
+
+	return "Copyright © " + photographer
 }

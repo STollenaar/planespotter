@@ -284,8 +284,10 @@ func TestDiscordSenderUsesFallbackImage(t *testing.T) {
 	}
 
 	err = sender.SendAircraft(context.Background(), messaging.AircraftMessage{
-		Aircraft: tar1090.Aircraft{Hex: "c12345"},
-		ImageURL: "https://example.test/fallback.jpg",
+		Aircraft:          tar1090.Aircraft{Hex: "c12345"},
+		ImageURL:          "https://example.test/fallback.jpg",
+		ImageCopyright:    "Copyright © Example Photographer",
+		ImageCopyrightURL: "https://www.planespotters.net/photo/123/example",
 	})
 	if err != nil {
 		t.Fatalf("SendAircraft() error = %v", err)
@@ -297,6 +299,13 @@ func TestDiscordSenderUsesFallbackImage(t *testing.T) {
 	if image["url"] != "https://example.test/fallback.jpg" {
 		t.Fatalf("image url = %#v, want fallback photo", image["url"])
 	}
+	fields := embed["fields"].([]any)
+	assertEmbedField(
+		t,
+		fields,
+		"Image copyright",
+		"[Copyright © Example Photographer](https://www.planespotters.net/photo/123/example)",
+	)
 }
 
 func TestDiscordSenderOmitsTimestampForFooterWithoutCountry(t *testing.T) {

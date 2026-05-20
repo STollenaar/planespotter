@@ -24,11 +24,13 @@ const (
 
 // AircraftMessage contains the aircraft data used to build a Discord message.
 type AircraftMessage struct {
-	Aircraft tar1090.Aircraft
-	Details  *adsbdb.Aircraft
-	CCAR     *ccar.Record
-	Route    *adsbdb.FlightRoute
-	ImageURL string
+	Aircraft          tar1090.Aircraft
+	Details           *adsbdb.Aircraft
+	CCAR              *ccar.Record
+	Route             *adsbdb.FlightRoute
+	ImageURL          string
+	ImageCopyright    string
+	ImageCopyrightURL string
 }
 
 // NoopSender discards aircraft messages.
@@ -190,6 +192,9 @@ func buildPayload(message AircraftMessage) webhooks.MessagePayload {
 	}
 	if imageURL := aircraftImageURL(message.Details, message.ImageURL); imageURL != "" {
 		embed.Image = &webhooks.EmbedImage{URL: imageURL}
+		if imageURL == strings.TrimSpace(message.ImageURL) {
+			addImageCopyrightField(&embed, message.ImageCopyright, message.ImageCopyrightURL)
+		}
 	}
 
 	return webhooks.MessagePayload{
@@ -198,6 +203,33 @@ func buildPayload(message AircraftMessage) webhooks.MessagePayload {
 			Parse: []webhooks.AllowedMentionsParse{},
 		},
 	}
+}
+
+func addImageCopyrightField(embed *webhooks.Embed, copyright string, copyrightURL string) {
+	copyright = strings.TrimSpace(copyright)
+	if copyright == "" {
+		return
+	}
+
+	copyrightURL = strings.TrimSpace(copyrightURL)
+	if copyrightURL != "" {
+		copyright = fmt.Sprintf("[%s](%s)", markdownLinkText(copyright), markdownLinkURL(copyrightURL))
+	}
+
+	embed.Fields = append(embed.Fields, webhooks.EmbedField{
+		Name:  "Image copyright",
+		Value: copyright,
+	})
+}
+
+func markdownLinkText(text string) string {
+	text = strings.ReplaceAll(text, `\`, `\\`)
+	text = strings.ReplaceAll(text, "]", `\]`)
+	return text
+}
+
+func markdownLinkURL(rawURL string) string {
+	return strings.ReplaceAll(rawURL, ")", "%29")
 }
 
 func aircraftImageURL(details *adsbdb.Aircraft, fallback string) string {

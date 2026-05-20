@@ -20,7 +20,7 @@ import (
 	"github.com/nint8835/planespotter/pkg/tar1090"
 )
 
-const userAgent = "planespotter (github.com/nint8835/planespotter)"
+const userAgent = "planespotter (+https://github.com/nint8835/planespotter)"
 
 // Monitor periodically fetches tar1090 aircraft data and posts newly-seen aircraft.
 type Monitor struct {
@@ -54,7 +54,7 @@ type aircraftMessageSender interface {
 }
 
 type aircraftPhotoClient interface {
-	AircraftPhoto(ctx context.Context, aircraft planespotters.Aircraft) (string, error)
+	AircraftPhoto(ctx context.Context, aircraft planespotters.Aircraft) (planespotters.Photo, error)
 }
 
 // Option configures a Monitor.
@@ -77,7 +77,7 @@ func WithADSBDBClient(client interface {
 
 // WithAircraftPhotoClient configures the client used to find fallback aircraft photos.
 func WithAircraftPhotoClient(client interface {
-	AircraftPhoto(ctx context.Context, aircraft planespotters.Aircraft) (string, error)
+	AircraftPhoto(ctx context.Context, aircraft planespotters.Aircraft) (planespotters.Photo, error)
 }) Option {
 	return func(m *Monitor) error {
 		if client == nil {
@@ -461,14 +461,16 @@ func (m *Monitor) postAircraft(ctx context.Context, aircraft tar1090.Aircraft) e
 		return err
 	}
 
-	imageURL := m.fallbackAircraftPhoto(ctx, aircraft, detailsPtr)
+	photo := m.fallbackAircraftPhoto(ctx, aircraft, detailsPtr)
 
 	if err := m.messages.SendAircraft(ctx, messaging.AircraftMessage{
-		Aircraft: aircraft,
-		Details:  detailsPtr,
-		CCAR:     ccarRecord,
-		Route:    route,
-		ImageURL: imageURL,
+		Aircraft:          aircraft,
+		Details:           detailsPtr,
+		CCAR:              ccarRecord,
+		Route:             route,
+		ImageURL:          photo.URL,
+		ImageCopyright:    photo.Copyright,
+		ImageCopyrightURL: photo.Link,
 	}); err != nil {
 		return fmt.Errorf("send aircraft message: %w", err)
 	}
@@ -507,22 +509,23 @@ func (m *Monitor) fallbackAircraftPhoto(
 	ctx context.Context,
 	aircraft tar1090.Aircraft,
 	details *adsbdb.Aircraft,
-) string {
+) planespotters.Photo {
 	if hasADSBDBPhoto(details) || m.photos == nil {
-		return ""
+		return planespotters.Photo{}
 	}
 
-	imageURL, err := m.photos.AircraftPhoto(ctx, planespotters.Aircraft{
+	photo, err := m.photos.AircraftPhoto(ctx, planespotters.Aircraft{
 		Hex:          aircraft.Hex,
 		Registration: aircraft.Registration,
 		ICAOType:     aircraft.AircraftType,
 	})
 	if err != nil {
 		slog.WarnContext(ctx, "Error looking up fallback aircraft photo", "hex", aircraft.Hex, "error", err)
-		return ""
+		return planespotters.Photo{}
 	}
 
-	return strings.TrimSpace(imageURL)
+	photo.URL = strings.TrimSpace(photo.URL)
+	return photo
 }
 
 func hasADSBDBPhoto(details *adsbdb.Aircraft) bool {
