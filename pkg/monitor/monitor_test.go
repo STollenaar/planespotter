@@ -1025,6 +1025,51 @@ func TestRunFetchesImmediately(t *testing.T) {
 	}
 }
 
+func TestRunRetriesTar1090FetchErrors(t *testing.T) {
+	server := aircraftSequenceServer(t, []aircraftResponse{
+		{statusCode: http.StatusInternalServerError, body: "fetch failed"},
+		{statusCode: http.StatusOK, body: `{"now":1,"messages":0,"aircraft":[{"hex":"abc123"}]}`},
+	})
+	defer server.Close()
+
+	path := filepath.Join(t.TempDir(), "seen.json")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	mon := newTestMonitorWithConfigAndOptions(t, config.Config{
+		Tar1090URL:           server.URL,
+		MonitorInterval:      10 * time.Millisecond,
+		CallsignWaitReceives: 0,
+		DataPath:             filepath.Dir(path),
+	}, monitor.WithADSBDBClient(&recordingADSBDBClient{}))
+
+	errc := make(chan error, 1)
+	go func() {
+		errc <- mon.Run(ctx)
+	}()
+
+	deadline := time.After(time.Second)
+	for {
+		if seenFileMatches(path, map[string]int64{"abc123": 1}) {
+			cancel()
+			break
+		}
+
+		select {
+		case err := <-errc:
+			t.Fatalf("Run() returned before retry succeeded: %v", err)
+		case <-deadline:
+			t.Fatal("timed out waiting for retry to persist state")
+		default:
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+
+	if err := <-errc; !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run() error = %v, want %v", err, context.Canceled)
+	}
+}
+
 func newTestMonitor(t *testing.T, tar1090URL string, path string) *monitor.Monitor {
 	t.Helper()
 

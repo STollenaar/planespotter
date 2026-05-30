@@ -22,6 +22,8 @@ import (
 
 const userAgent = "planespotter (+https://github.com/nint8835/planespotter)"
 
+var errFetchAircraft = errors.New("fetch aircraft")
+
 // Monitor periodically fetches tar1090 aircraft data and posts newly-seen aircraft.
 type Monitor struct {
 	cfg          config.Config
@@ -201,7 +203,7 @@ func New(cfg config.Config, opts ...Option) (*Monitor, error) {
 func (m *Monitor) Run(ctx context.Context) error {
 	slog.DebugContext(ctx, "Starting monitor", "interval", m.cfg.MonitorInterval)
 
-	if err := m.FetchAndCheck(ctx); err != nil {
+	if err := m.fetchAndCheckForRun(ctx); err != nil {
 		return fmt.Errorf("fetch and check: %w", err)
 	}
 
@@ -214,11 +216,27 @@ func (m *Monitor) Run(ctx context.Context) error {
 			slog.DebugContext(ctx, "Stopping monitor", "error", ctx.Err())
 			return ctx.Err()
 		case <-ticker.C:
-			if err := m.FetchAndCheck(ctx); err != nil {
+			if err := m.fetchAndCheckForRun(ctx); err != nil {
 				return fmt.Errorf("fetch and check: %w", err)
 			}
 		}
 	}
+}
+
+func (m *Monitor) fetchAndCheckForRun(ctx context.Context) error {
+	if err := m.FetchAndCheck(ctx); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		if errors.Is(err, errFetchAircraft) {
+			slog.WarnContext(ctx, "Failed to fetch aircraft; will retry", "err", err)
+			return nil
+		}
+
+		return err
+	}
+
+	return nil
 }
 
 // FetchAndCheck fetches aircraft, posts newly-seen aircraft, and persists seen state.
@@ -227,7 +245,7 @@ func (m *Monitor) FetchAndCheck(ctx context.Context) error {
 
 	response, err := m.client.FetchAircraft(ctx)
 	if err != nil {
-		return fmt.Errorf("fetch aircraft: %w", err)
+		return fmt.Errorf("%w: %w", errFetchAircraft, err)
 	}
 	slog.DebugContext(
 		ctx,
