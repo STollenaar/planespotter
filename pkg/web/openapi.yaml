@@ -1,0 +1,36 @@
+openapi: 3.0.3
+info:
+  title: planespotter API
+  version: 0.1.0
+paths:
+  /api/healthcheck:
+    get:
+      operationId: getHealthcheck
+      summary: Check application health.
+      responses:
+        "200":
+          description: The application and its dependencies are healthy.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthcheckResponse"
+        "503":
+          description: A required dependency is unhealthy.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthcheckResponse"
+components:
+  schemas:
+    HealthcheckResponse:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          enum:
+            - ok
+            - unhealthy
+        error:
+          type: string

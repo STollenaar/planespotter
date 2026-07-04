@@ -16,6 +16,7 @@ const envPrefix = "PLANESPOTTER"
 // Config contains planespotter configuration loaded from the environment.
 type Config struct {
 	LogLevel               slog.Level    `split_words:"true" default:"INFO"`
+	HTTPAddr               string        `split_words:"true" default:":8080"`
 	Tar1090URL             string        `split_words:"true" required:"true"`
 	MonitorInterval        time.Duration `split_words:"true" default:"15s"`
 	MaxAltitude            int           `split_words:"true" default:"10000"`

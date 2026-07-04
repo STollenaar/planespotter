@@ -6,6 +6,7 @@ Monitors a local instance of dump1090 / ultrafeeder and posts when planes are se
 Configuration is loaded from `.env` and `PLANESPOTTER_` environment variables.
 
 - `PLANESPOTTER_TAR1090_URL`: base URL for the tar1090 instance.
+- `PLANESPOTTER_HTTP_ADDR`: address for the HTTP API server, default `:8080`.
 - `PLANESPOTTER_DISCORD_WEBHOOK_URL`: Discord webhook URL to post new aircraft messages to.
 - `PLANESPOTTER_DISCORD_WEBHOOK_THREAD_ID`: optional Discord thread ID for webhook messages.
 - `PLANESPOTTER_MONITOR_INTERVAL`: polling interval, default `15s`.
