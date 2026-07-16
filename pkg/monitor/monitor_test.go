@@ -1278,3 +1278,233 @@ func seenFileMatches(path string, want map[string]int64) bool {
 
 	return true
 }
+
+// An aircraft is only posted once for being spotted, so a diversion has to be able
+// to post an aircraft that was already seen on an earlier fetch.
+func TestFetchAndCheckPostsDiversionForAlreadySeenAircraft(t *testing.T) {
+	server := aircraftServer(
+		t,
+		http.StatusOK,
+		`{"now":1,"messages":0,"aircraft":[{"hex":"abc123","flight":"ABC123","alt_baro":6000,`+
+			`"baro_rate":-1200,"lat":45.3225,"lon":-75.6692}]}`,
+	)
+	defer server.Close()
+
+	path := filepath.Join(t.TempDir(), "seen.json")
+	writeSeenFixture(t, path, map[string]int64{"abc123": 0})
+
+	sender := &recordingMessageSender{}
+	mon := newTestMonitorWithOptions(
+		t,
+		server.URL,
+		path,
+		monitor.WithADSBDBClient(&recordingADSBDBClient{route: torontoRoute()}),
+		monitor.WithMessageSender(sender),
+	)
+	if err := mon.FetchAndCheck(context.Background()); err != nil {
+		t.Fatalf("FetchAndCheck() error = %v", err)
+	}
+
+	if len(sender.messages) != 1 {
+		t.Fatalf("messages = %#v, want one diversion message", sender.messages)
+	}
+	message := sender.messages[0]
+	if message.Diversion == nil {
+		t.Fatal("message diversion = nil, want diversion")
+	}
+	if message.Diversion.NearestAirport.IATACode != "YYZ" {
+		t.Errorf("nearest airport = %q, want YYZ", message.Diversion.NearestAirport.IATACode)
+	}
+}
+
+func TestFetchAndCheckPostsDivertingAircraftOnlyOnce(t *testing.T) {
+	body := `{"now":1,"messages":0,"aircraft":[{"hex":"abc123","flight":"ABC123","alt_baro":6000,` +
+		`"baro_rate":-1200,"lat":45.3225,"lon":-75.6692}]}`
+	server := aircraftServer(t, http.StatusOK, body)
+	defer server.Close()
+
+	path := filepath.Join(t.TempDir(), "seen.json")
+	writeSeenFixture(t, path, map[string]int64{"abc123": 0})
+
+	sender := &recordingMessageSender{}
+	adsbdbClient := &recordingADSBDBClient{route: torontoRoute()}
+	mon := newTestMonitorWithOptions(
+		t,
+		server.URL,
+		path,
+		monitor.WithADSBDBClient(adsbdbClient),
+		monitor.WithMessageSender(sender),
+	)
+	for range 3 {
+		if err := mon.FetchAndCheck(context.Background()); err != nil {
+			t.Fatalf("FetchAndCheck() error = %v", err)
+		}
+	}
+
+	if len(sender.messages) != 1 {
+		t.Fatalf("messages = %#v, want a single diversion message", sender.messages)
+	}
+	// The filed route does not change over a flight, so it is looked up once and
+	// reused for the length of the descent.
+	if len(adsbdbClient.callsigns) != 1 {
+		t.Fatalf("adsbdb Callsign() callsigns = %#v, want a single lookup", adsbdbClient.callsigns)
+	}
+}
+
+// A new aircraft that is already diverting posts once, as a new aircraft carrying
+// the diversion, rather than posting again as a diversion on the next fetch.
+func TestFetchAndCheckDoesNotRepostNewAircraftThatIsAlreadyDiverting(t *testing.T) {
+	body := `{"now":1,"messages":0,"aircraft":[{"hex":"abc123","flight":"ABC123","alt_baro":6000,` +
+		`"baro_rate":-1200,"lat":45.3225,"lon":-75.6692}]}`
+	server := aircraftServer(t, http.StatusOK, body)
+	defer server.Close()
+
+	path := filepath.Join(t.TempDir(), "seen.json")
+	sender := &recordingMessageSender{}
+	mon := newTestMonitorWithOptions(
+		t,
+		server.URL,
+		path,
+		monitor.WithADSBDBClient(&recordingADSBDBClient{route: torontoRoute()}),
+		monitor.WithMessageSender(sender),
+	)
+	for range 2 {
+		if err := mon.FetchAndCheck(context.Background()); err != nil {
+			t.Fatalf("FetchAndCheck() error = %v", err)
+		}
+	}
+
+	if len(sender.messages) != 1 {
+		t.Fatalf("messages = %#v, want a single new aircraft message", sender.messages)
+	}
+	if sender.messages[0].Diversion == nil {
+		t.Error("message diversion = nil, want the new aircraft to carry its diversion")
+	}
+}
+
+// A diverting aircraft levels off and cruises to its alternate, so a level aircraft
+// far from every filed airport must still post.
+func TestFetchAndCheckPostsDiversionForLevelAircraft(t *testing.T) {
+	server := aircraftServer(
+		t,
+		http.StatusOK,
+		`{"now":1,"messages":0,"aircraft":[{"hex":"abc123","flight":"ABC123","alt_baro":6000,`+
+			`"baro_rate":0,"lat":45.3225,"lon":-75.6692}]}`,
+	)
+	defer server.Close()
+
+	path := filepath.Join(t.TempDir(), "seen.json")
+	writeSeenFixture(t, path, map[string]int64{"abc123": 0})
+
+	sender := &recordingMessageSender{}
+	mon := newTestMonitorWithOptions(
+		t,
+		server.URL,
+		path,
+		monitor.WithADSBDBClient(&recordingADSBDBClient{route: torontoRoute()}),
+		monitor.WithMessageSender(sender),
+	)
+	if err := mon.FetchAndCheck(context.Background()); err != nil {
+		t.Fatalf("FetchAndCheck() error = %v", err)
+	}
+
+	if len(sender.messages) != 1 {
+		t.Fatalf("messages = %#v, want one diversion message", sender.messages)
+	}
+	if sender.messages[0].Diversion == nil {
+		t.Fatal("message diversion = nil, want a levelled-off diversion")
+	}
+}
+
+// Toronto, the filed destination, is roughly 196 nm from Ottawa, where the test
+// aircraft is flying.
+func torontoRoute() adsbdb.FlightRoute {
+	return adsbdb.FlightRoute{
+		Callsign: "ABC123",
+		Origin: adsbdb.Airport{
+			IATACode:  "YYT",
+			Latitude:  47.6187,
+			Longitude: -52.7519,
+		},
+		Destination: adsbdb.Airport{
+			IATACode:     "YYZ",
+			Municipality: "Toronto",
+			Latitude:     43.6777,
+			Longitude:    -79.6248,
+		},
+	}
+}
+
+// PLANESPOTTER_MAX_ALTITUDE is the only altitude bound on diversion checks: an
+// airliner descending from cruise is hundreds of miles from its destination and is
+// not diverting, so it must be filtered out before the diversion check.
+func TestFetchAndCheckDoesNotCheckDiversionAboveMaxAltitude(t *testing.T) {
+	server := aircraftServer(
+		t,
+		http.StatusOK,
+		`{"now":1,"messages":0,"aircraft":[{"hex":"abc123","flight":"ABC123","alt_baro":28000,`+
+			`"baro_rate":-1200,"lat":45.3225,"lon":-75.6692}]}`,
+	)
+	defer server.Close()
+
+	path := filepath.Join(t.TempDir(), "seen.json")
+	writeSeenFixture(t, path, map[string]int64{"abc123": 0})
+
+	sender := &recordingMessageSender{}
+	adsbdbClient := &recordingADSBDBClient{route: torontoRoute()}
+	mon := newTestMonitorWithConfigAndOptions(t, config.Config{
+		Tar1090URL:      server.URL,
+		MonitorInterval: time.Minute,
+		MaxAltitude:     10000,
+		DataPath:        filepath.Dir(path),
+	}, monitor.WithADSBDBClient(adsbdbClient), monitor.WithMessageSender(sender))
+	if err := mon.FetchAndCheck(context.Background()); err != nil {
+		t.Fatalf("FetchAndCheck() error = %v", err)
+	}
+
+	if len(sender.messages) != 0 {
+		t.Fatalf("messages = %#v, want none", sender.messages)
+	}
+	if len(adsbdbClient.callsigns) != 0 {
+		t.Fatalf("adsbdb Callsign() callsigns = %#v, want no lookups", adsbdbClient.callsigns)
+	}
+}
+
+// A transient adsbdb failure must not disable diversion checks for the rest of an
+// aircraft's flight.
+func TestFetchAndCheckRetriesRouteLookupAfterTransientFailure(t *testing.T) {
+	server := aircraftServer(
+		t,
+		http.StatusOK,
+		`{"now":1,"messages":0,"aircraft":[{"hex":"abc123","flight":"ABC123","alt_baro":6000,`+
+			`"baro_rate":-1200,"lat":45.3225,"lon":-75.6692}]}`,
+	)
+	defer server.Close()
+
+	path := filepath.Join(t.TempDir(), "seen.json")
+	sender := &recordingMessageSender{}
+	adsbdbClient := &recordingADSBDBClient{route: torontoRoute(), routeErr: errors.New("boom")}
+	mon := newTestMonitorWithOptions(
+		t,
+		server.URL,
+		path,
+		monitor.WithADSBDBClient(adsbdbClient),
+		monitor.WithMessageSender(sender),
+	)
+
+	// The aircraft is new, and the route lookup fails, so it posts as a plain new spot.
+	if err := mon.FetchAndCheck(context.Background()); err != nil {
+		t.Fatalf("FetchAndCheck() error = %v", err)
+	}
+	adsbdbClient.routeErr = nil
+	if err := mon.FetchAndCheck(context.Background()); err != nil {
+		t.Fatalf("FetchAndCheck() error = %v", err)
+	}
+
+	if len(sender.messages) != 2 {
+		t.Fatalf("messages = %d, want the diversion to post once adsbdb recovered", len(sender.messages))
+	}
+	if sender.messages[1].Diversion == nil {
+		t.Fatal("second message diversion = nil, want diversion")
+	}
+}

@@ -14,6 +14,7 @@ import (
 	webhooks "github.com/typical-developers/discord-webhooks-go/v2"
 
 	"github.com/nint8835/planespotter/pkg/ccar"
+	"github.com/nint8835/planespotter/pkg/diversion"
 	"github.com/nint8835/planespotter/pkg/tar1090"
 )
 
@@ -28,6 +29,7 @@ type AircraftMessage struct {
 	Details           *adsbdb.Aircraft
 	CCAR              *ccar.Record
 	Route             *adsbdb.FlightRoute
+	Diversion         *diversion.Diversion
 	ImageURL          string
 	ImageCopyright    string
 	ImageCopyrightURL string
@@ -183,11 +185,11 @@ func buildPayload(message AircraftMessage) webhooks.MessagePayload {
 	)
 
 	embed := webhooks.Embed{
-		Author: &webhooks.EmbedAuthor{Name: "New aircraft spotted"},
+		Author: &webhooks.EmbedAuthor{Name: authorName(message.Diversion)},
 		Title:  title,
 		URL:    flightInfoURL(aircraft),
-		Color:  embedColor(aircraft),
-		Fields: fields(aircraft, message.Details, message.CCAR, message.Route),
+		Color:  embedColor(aircraft, message.Diversion),
+		Fields: fields(aircraft, message.Details, message.CCAR, message.Route, message.Diversion),
 		Footer: footer(aircraft, message.Details),
 	}
 	if imageURL := aircraftImageURL(message.Details, message.ImageURL); imageURL != "" {
@@ -268,6 +270,7 @@ func fields(
 	details *adsbdb.Aircraft,
 	ccarRecord *ccar.Record,
 	route *adsbdb.FlightRoute,
+	diverting *diversion.Diversion,
 ) []webhooks.EmbedField {
 	var fields []webhooks.EmbedField
 	addField := func(name string, value string) {
@@ -279,6 +282,7 @@ func fields(
 	addField("Aircraft", identityLine(aircraft, details))
 	addField("Operator", firstNonEmpty(airline(route), ccarOwner(ccarRecord), detailOwner(details), aircraft.OwnOp))
 	addField("Route", routeDescription(route))
+	addField("Possibly diverting", diversionDescription(diverting))
 	if len(fields) == 0 {
 		addField("Aircraft", "A previously unseen aircraft was picked up by tar1090.")
 	}
@@ -299,8 +303,19 @@ func footer(aircraft tar1090.Aircraft, details *adsbdb.Aircraft) *webhooks.Embed
 	return &webhooks.EmbedFooter{Text: text}
 }
 
-func embedColor(aircraft tar1090.Aircraft) int {
+// authorName labels a post by what is most worth knowing about it. A diversion is
+// announced whether or not the aircraft is also a new spot.
+func authorName(diverting *diversion.Diversion) string {
+	if diverting != nil {
+		return "Aircraft possibly diverting"
+	}
+	return "New aircraft spotted"
+}
+
+func embedColor(aircraft tar1090.Aircraft, diverting *diversion.Diversion) int {
 	switch {
+	case diverting != nil:
+		return 0xf2994a
 	case aircraft.DBFlags&tar1090.DBFlagMilitary != 0:
 		return 0xeb5757
 	case aircraft.DBFlags&tar1090.DBFlagInteresting != 0:

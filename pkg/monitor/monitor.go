@@ -15,6 +15,7 @@ import (
 
 	"github.com/nint8835/planespotter/pkg/ccar"
 	"github.com/nint8835/planespotter/pkg/config"
+	"github.com/nint8835/planespotter/pkg/diversion"
 	"github.com/nint8835/planespotter/pkg/messaging"
 	"github.com/nint8835/planespotter/pkg/planespotters"
 	"github.com/nint8835/planespotter/pkg/tar1090"
@@ -34,12 +35,24 @@ type Monitor struct {
 	messages     aircraftMessageSender
 	seenAircraft map[string]time.Time
 	pending      map[string]pendingAircraft
+	tracked      map[string]trackedAircraft
 }
 
 type pendingAircraft struct {
 	aircraft tar1090.Aircraft
 	receives int
 	lastSeen time.Time
+}
+
+// trackedAircraft is in-memory state for an aircraft the monitor has looked at. It
+// caches the aircraft's filed route, which does not change over a flight, so that
+// checking for a diversion on every fetch does not repeat the route lookup, and
+// records that its diversion has been posted so it is not posted twice.
+type trackedAircraft struct {
+	callsign        string
+	route           *adsbdb.FlightRoute
+	routeFetched    bool
+	diversionPosted bool
 }
 
 type aircraftLookupClient interface {
@@ -179,6 +192,7 @@ func New(cfg config.Config, opts ...Option) (*Monitor, error) {
 		client:   client,
 		messages: messageSender,
 		pending:  map[string]pendingAircraft{},
+		tracked:  map[string]trackedAircraft{},
 	}
 	for _, opt := range opts {
 		if opt == nil {
@@ -276,7 +290,15 @@ func (m *Monitor) FetchAndCheck(ctx context.Context) error {
 				m.seenAircraft[aircraft.Hex] = lastSeen
 				seenAircraftChanged = true
 			}
-			m.logIgnoredAircraft(ctx, aircraft, "already_seen")
+			// An already-seen aircraft is not posted again for being spotted, but it
+			// may since have begun to divert.
+			posted, err := m.checkDiversion(ctx, aircraft)
+			if err != nil {
+				return err
+			}
+			if !posted {
+				m.logIgnoredAircraft(ctx, aircraft, "already_seen")
+			}
 			continue
 		}
 		if pending, ok := m.pending[aircraft.Hex]; ok {
@@ -341,6 +363,87 @@ func (m *Monitor) FetchAndCheck(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// checkDiversion posts an already-seen aircraft that has begun to divert, reporting
+// whether it posted. An aircraft's diversion is posted only once, so it does not
+// repost on every fetch for the length of its descent.
+func (m *Monitor) checkDiversion(ctx context.Context, aircraft tar1090.Aircraft) (bool, error) {
+	if m.tracked[aircraft.Hex].diversionPosted {
+		return false, nil
+	}
+
+	// The route lookup is cached per aircraft, so checking every already-seen
+	// aircraft on every fetch costs at most one request over an aircraft's flight.
+	route, err := m.routeFor(ctx, aircraft)
+	if err != nil {
+		return false, err
+	}
+	diverting := diversion.Detect(aircraft, route)
+	if diverting == nil {
+		return false, nil
+	}
+
+	slog.InfoContext(
+		ctx,
+		"Found possibly diverting aircraft",
+		"hex", aircraft.Hex,
+		"flight", aircraft.Flight,
+		"altitude", diverting.AltitudeFeet,
+		"nearest_filed_airport", diverting.NearestAirport.ICAOCode,
+		"nearest_filed_airport_distance_nm", diverting.DistanceNM,
+	)
+
+	if err := m.postAircraft(ctx, aircraft); err != nil {
+		return false, fmt.Errorf("post diverting aircraft %s: %w", aircraft.Hex, err)
+	}
+
+	return true, nil
+}
+
+func (m *Monitor) markDiversionPosted(hex string) {
+	tracked := m.tracked[hex]
+	tracked.diversionPosted = true
+	m.tracked[hex] = tracked
+}
+
+// routeFor returns an aircraft's filed route, looking it up only the first time it
+// is needed for a given callsign.
+func (m *Monitor) routeFor(ctx context.Context, aircraft tar1090.Aircraft) (*adsbdb.FlightRoute, error) {
+	callsign := strings.TrimSpace(aircraft.Flight)
+	if callsign == "" {
+		return nil, nil
+	}
+
+	tracked := m.tracked[aircraft.Hex]
+	if tracked.routeFetched && tracked.callsign == callsign {
+		return tracked.route, nil
+	}
+
+	route, err := m.flightRoute(ctx, aircraft)
+	if err != nil {
+		slog.WarnContext(
+			ctx,
+			"Error looking up flight route",
+			"hex", aircraft.Hex,
+			"callsign", callsign,
+			"error", err,
+		)
+
+		// Only adsbdb answering that it knows no route for the callsign is cached. A
+		// transient failure must not disable diversion checks for the rest of the
+		// flight, so it is left to be retried on the next fetch.
+		if !errors.Is(err, adsbdb.ErrNotFound) {
+			return nil, nil
+		}
+	}
+
+	tracked.callsign = callsign
+	tracked.route = route
+	tracked.routeFetched = true
+	m.tracked[aircraft.Hex] = tracked
+
+	return route, nil
 }
 
 func (m *Monitor) postAndMarkSeen(ctx context.Context, aircraft tar1090.Aircraft, lastSeen time.Time) error {
@@ -474,23 +577,31 @@ func (m *Monitor) postAircraft(ctx context.Context, aircraft tar1090.Aircraft) e
 
 	ccarRecord := m.ccarAircraft(ctx, aircraft, detailsPtr)
 
-	route, err := m.flightRoute(ctx, aircraft)
+	route, err := m.routeFor(ctx, aircraft)
 	if err != nil {
 		return err
 	}
 
 	photo := m.fallbackAircraftPhoto(ctx, aircraft, detailsPtr)
+	diverting := diversion.Detect(aircraft, route)
 
 	if err := m.messages.SendAircraft(ctx, messaging.AircraftMessage{
 		Aircraft:          aircraft,
 		Details:           detailsPtr,
 		CCAR:              ccarRecord,
 		Route:             route,
+		Diversion:         diverting,
 		ImageURL:          photo.URL,
 		ImageCopyright:    photo.Copyright,
 		ImageCopyrightURL: photo.Link,
 	}); err != nil {
 		return fmt.Errorf("send aircraft message: %w", err)
+	}
+
+	// Recorded whatever the reason for the post, so that an aircraft posted as a new
+	// spot while already diverting is not immediately posted again as a diversion.
+	if diverting != nil {
+		m.markDiversionPosted(aircraft.Hex)
 	}
 
 	return nil
@@ -554,24 +665,12 @@ func hasADSBDBPhoto(details *adsbdb.Aircraft) bool {
 }
 
 func (m *Monitor) flightRoute(ctx context.Context, aircraft tar1090.Aircraft) (*adsbdb.FlightRoute, error) {
-	callsign := strings.TrimSpace(aircraft.Flight)
-	if callsign == "" {
-		return nil, nil
-	}
-
-	route, err := m.adsbdb.Callsign(ctx, callsign)
+	route, err := m.adsbdb.Callsign(ctx, strings.TrimSpace(aircraft.Flight))
 	if err != nil {
-		slog.WarnContext(
-			ctx,
-			"Error looking up flight route",
-			"hex", aircraft.Hex,
-			"callsign", callsign,
-			"error", err,
-		)
-		return nil, nil
+		return nil, err
 	}
 
-	correctAirline(callsign, &route)
+	correctAirline(strings.TrimSpace(aircraft.Flight), &route)
 
 	return &route, nil
 }

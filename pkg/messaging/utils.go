@@ -7,6 +7,7 @@ import (
 	adsbdb "github.com/nint8835/go-adsbdb"
 
 	"github.com/nint8835/planespotter/pkg/ccar"
+	"github.com/nint8835/planespotter/pkg/diversion"
 	"github.com/nint8835/planespotter/pkg/tar1090"
 )
 
@@ -33,6 +34,19 @@ func airport(airport adsbdb.Airport) string {
 		return code
 	}
 	return fmt.Sprintf("%s (%s)", code, airport.Municipality)
+}
+
+func diversionDescription(diverting *diversion.Diversion) string {
+	if diverting == nil {
+		return ""
+	}
+
+	return fmt.Sprintf(
+		"At %d ft, %.0f nm from the nearest airport on its filed route: %s",
+		diverting.AltitudeFeet,
+		diverting.DistanceNM,
+		airport(diverting.NearestAirport),
+	)
 }
 
 func airline(route *adsbdb.FlightRoute) string {
