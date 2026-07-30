@@ -10,6 +10,7 @@ import (
 	adsbdb "github.com/nint8835/go-adsbdb"
 
 	"github.com/nint8835/planespotter/pkg/diversion"
+	"github.com/nint8835/planespotter/pkg/flightaware"
 	"github.com/nint8835/planespotter/pkg/messaging"
 	"github.com/nint8835/planespotter/pkg/tar1090"
 )
@@ -544,11 +545,11 @@ func TestDiscordSenderRendersDivertingAircraft(t *testing.T) {
 
 	err = sender.SendAircraft(context.Background(), messaging.AircraftMessage{
 		Aircraft: tar1090.Aircraft{Hex: "c12345", Flight: "ABC123"},
-		Diversion: &diversion.Diversion{
+		Diversion: messaging.GeometricDiversion(&diversion.Diversion{
 			NearestAirport: adsbdb.Airport{IATACode: "YYZ", Municipality: "Toronto"},
 			DistanceNM:     196,
 			AltitudeFeet:   6000,
-		},
+		}),
 	})
 	if err != nil {
 		t.Fatalf("SendAircraft() error = %v", err)
@@ -588,7 +589,7 @@ func TestDiscordSenderLabelsDivertingNewAircraftAsDiverting(t *testing.T) {
 
 	err = sender.SendAircraft(context.Background(), messaging.AircraftMessage{
 		Aircraft:  tar1090.Aircraft{Hex: "c12345", Flight: "ABC123", DBFlags: tar1090.DBFlagMilitary},
-		Diversion: &diversion.Diversion{NearestAirport: adsbdb.Airport{IATACode: "YYZ"}},
+		Diversion: messaging.GeometricDiversion(&diversion.Diversion{NearestAirport: adsbdb.Airport{IATACode: "YYZ"}}),
 	})
 	if err != nil {
 		t.Fatalf("SendAircraft() error = %v", err)
@@ -636,5 +637,54 @@ func TestDiscordSenderOmitsDiversionFieldForAircraftNotDiverting(t *testing.T) {
 		if field.(map[string]any)["name"] == "Possibly diverting" {
 			t.Fatalf("fields = %#v, want no diversion field", embed["fields"])
 		}
+	}
+}
+
+func TestDiscordSenderRendersFlightAwareDiversion(t *testing.T) {
+	var gotPayload map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotPayload); err != nil {
+			t.Errorf("decode payload: %v", err)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	sender, err := messaging.NewDiscordSender(server.URL, "")
+	if err != nil {
+		t.Fatalf("NewDiscordSender() error = %v", err)
+	}
+
+	err = sender.SendAircraft(context.Background(), messaging.AircraftMessage{
+		Aircraft: tar1090.Aircraft{Hex: "c12345", Flight: "ACA123"},
+		Diversion: messaging.FlightAwareDiversion(&flightaware.Flight{
+			Diverted:    true,
+			Origin:      &flightaware.Airport{CodeIATA: "YYT", City: "St. John's"},
+			Destination: &flightaware.Airport{CodeIATA: "YYZ", City: "Toronto"},
+		}),
+	})
+	if err != nil {
+		t.Fatalf("SendAircraft() error = %v", err)
+	}
+
+	embeds := gotPayload["embeds"].([]any)
+	embed := embeds[0].(map[string]any)
+	if embed["color"] != float64(0xf2994a) {
+		t.Fatalf("embed color = %#v, want diversion orange", embed["color"])
+	}
+	assertEmbedField(
+		t,
+		embed["fields"].([]any),
+		"Possibly diverting",
+		"FlightAware reports this flight as diverted, filed YYT (St. John's) -> YYZ (Toronto)",
+	)
+}
+
+func TestFlightAwareDiversionIsNilWhenNotDiverted(t *testing.T) {
+	if got := messaging.FlightAwareDiversion(&flightaware.Flight{Diverted: false}); got != nil {
+		t.Fatalf("FlightAwareDiversion() = %#v, want nil", got)
+	}
+	if got := messaging.FlightAwareDiversion(nil); got != nil {
+		t.Fatalf("FlightAwareDiversion(nil) = %#v, want nil", got)
 	}
 }
