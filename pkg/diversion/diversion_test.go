@@ -30,10 +30,10 @@ func lowOverOttawa() tar1090.Aircraft {
 	return tar1090.Aircraft{
 		Hex:          "c12345",
 		Flight:       "ABC123",
-		AltitudeBaro: tar1090.BarometricAltitude{Feet: intPtr(6000)},
-		BaroRate:     intPtr(-1200),
-		Latitude:     float64Ptr(45.3225),
-		Longitude:    float64Ptr(-75.6692),
+		AltitudeBaro: tar1090.BarometricAltitude{Feet: new(6000)},
+		BaroRate:     new(-1200),
+		Latitude:     new(45.3225),
+		Longitude:    new(-75.6692),
 	}
 }
 
@@ -56,8 +56,8 @@ func TestDetectFlagsAircraftLowFarFromEveryFiledAirport(t *testing.T) {
 func TestDetectIgnoresAircraftNearFiledDestination(t *testing.T) {
 	aircraft := lowOverOttawa()
 	// Near Toronto, its filed destination.
-	aircraft.Latitude = float64Ptr(43.8)
-	aircraft.Longitude = float64Ptr(-79.7)
+	aircraft.Latitude = new(43.8)
+	aircraft.Longitude = new(-79.7)
 
 	if got := diversion.Detect(aircraft, torontoRoute()); got != nil {
 		t.Fatalf("Detect() = %#v, want nil", got)
@@ -81,7 +81,7 @@ func TestDetectIgnoresAircraftNearFiledMidpoint(t *testing.T) {
 // it is not descending for most of the diversion.
 func TestDetectFlagsAircraftLevelFarFromEveryFiledAirport(t *testing.T) {
 	aircraft := lowOverOttawa()
-	aircraft.BaroRate = intPtr(0)
+	aircraft.BaroRate = new(0)
 
 	if got := diversion.Detect(aircraft, torontoRoute()); got == nil {
 		t.Fatal("Detect() = nil, want a levelled-off diversion")
@@ -150,7 +150,7 @@ func TestDetectIgnoresFiledAirportsWithoutCoordinates(t *testing.T) {
 func TestDetectUsesGeometricAltitudeWhenBarometricIsMissing(t *testing.T) {
 	aircraft := lowOverOttawa()
 	aircraft.AltitudeBaro = tar1090.BarometricAltitude{}
-	aircraft.AltitudeGeom = intPtr(6000)
+	aircraft.AltitudeGeom = new(6000)
 
 	if got := diversion.Detect(aircraft, torontoRoute()); got == nil {
 		t.Fatal("Detect() = nil, want diversion")
@@ -165,7 +165,3 @@ func TestDetectIgnoresAircraftOnGround(t *testing.T) {
 		t.Fatalf("Detect() = %#v, want nil", got)
 	}
 }
-
-func intPtr(value int) *int { return &value }
-
-func float64Ptr(value float64) *float64 { return &value }

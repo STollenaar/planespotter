@@ -46,11 +46,11 @@ func Detect(aircraft tar1090.Aircraft, route *adsbdb.FlightRoute) *Diversion {
 		return nil
 	}
 
-	feet, ok := altitude(aircraft)
+	feet, ok := aircraft.Altitude()
 	if !ok {
 		return nil
 	}
-	latitude, longitude, ok := position(aircraft)
+	latitude, longitude, ok := aircraft.Position()
 	if !ok {
 		return nil
 	}
@@ -64,29 +64,6 @@ func Detect(aircraft tar1090.Aircraft, route *adsbdb.FlightRoute) *Diversion {
 		DistanceNM:     distance,
 		AltitudeFeet:   feet,
 	}
-}
-
-func altitude(aircraft tar1090.Aircraft) (int, bool) {
-	if aircraft.AltitudeBaro.Ground {
-		return 0, false
-	}
-	if aircraft.AltitudeBaro.Feet != nil {
-		return *aircraft.AltitudeBaro.Feet, true
-	}
-	if aircraft.AltitudeGeom != nil {
-		return *aircraft.AltitudeGeom, true
-	}
-	return 0, false
-}
-
-func position(aircraft tar1090.Aircraft) (float64, float64, bool) {
-	if aircraft.Latitude != nil && aircraft.Longitude != nil {
-		return *aircraft.Latitude, *aircraft.Longitude, true
-	}
-	if aircraft.LastPosition != nil {
-		return aircraft.LastPosition.Latitude, aircraft.LastPosition.Longitude, true
-	}
-	return 0, 0, false
 }
 
 func nearestFiledAirport(
@@ -103,7 +80,9 @@ func nearestFiledAirport(
 	nearestDistance := math.Inf(1)
 	found := false
 	for _, candidate := range filed {
-		if !hasPosition(candidate) {
+		// A zero position is adsbdb having no coordinates for the airport rather than
+		// a real location on the null island.
+		if candidate.Latitude == 0 && candidate.Longitude == 0 {
 			continue
 		}
 
@@ -114,12 +93,6 @@ func nearestFiledAirport(
 	}
 
 	return nearest, nearestDistance, found
-}
-
-// hasPosition reports whether an airport has coordinates, treating the null island
-// as adsbdb having no position for it.
-func hasPosition(airport adsbdb.Airport) bool {
-	return airport.Latitude != 0 || airport.Longitude != 0
 }
 
 func distanceNM(latitude1 float64, longitude1 float64, latitude2 float64, longitude2 float64) float64 {
